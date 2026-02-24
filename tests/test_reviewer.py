@@ -5,14 +5,12 @@ from __future__ import annotations
 import json
 import subprocess
 
+from guardrails_review.parser import parse_response, parse_submit_review_args
+from guardrails_review.prompts import build_agentic_messages, build_messages
 from guardrails_review.reviewer import (
     _compute_verdict,
     _print_dry_run,
     _run_agentic_review,
-    build_agentic_messages,
-    build_messages,
-    parse_response,
-    parse_submit_review_args,
     run_resolve,
     run_review,
     validate_comments,

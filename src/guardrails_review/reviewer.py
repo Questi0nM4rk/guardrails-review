@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +19,8 @@ from guardrails_review.github import (
     set_commit_status,
 )
 from guardrails_review.llm import call_openrouter, call_openrouter_tools
+from guardrails_review.parser import parse_response, parse_submit_review_args
+from guardrails_review.prompts import build_agentic_messages, build_messages
 from guardrails_review.threads import (
     deduplicate_comments,
     find_resolvable_threads,
@@ -40,206 +40,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-_SYSTEM_PROMPT = """\
-You are a pedantic defect detector. Review the PR diff and return ONLY valid JSON:
-
-{
-  "verdict": "approve" | "request_changes",
-  "summary": "1-2 sentence assessment",
-  "comments": [
-    {
-      "path": "relative/file/path",
-      "line": <line number in new file>,
-      "body": "description of the defect"
-    }
-  ]
-}
-
-**ONLY report these defect categories:**
-- Bugs and logic errors
-- Security vulnerabilities
-- Data races and concurrency issues
-- Resource leaks (file handles, connections, memory)
-- Unhandled error paths (missing error checks, swallowed exceptions)
-- API contract violations (wrong types, missing required fields, broken invariants)
-
-**Do NOT report:**
-- Style, formatting, or naming
-- "Consider doing X" suggestions
-- Missing tests or documentation
-- Performance unless it's a clear algorithmic bug (e.g. O(n^2) in a hot path)
-
-Rules:
-- Line numbers reference the new file (right side of diff, + or space-prefixed lines)
-- Only comment on lines within diff hunks
-- Empty comments + "approve" = no issues found
-- Include a <!-- guardrails-review --> HTML comment at the start of the summary\
-"""
-
-_AGENTIC_SYSTEM_PROMPT = """\
-You are a pedantic defect detector with tools to explore the codebase before submitting.
-
-**Workflow:**
-1. First, examine the diff to understand what changed
-2. Use your tools to gather context:
-   - read_file() to see full file context around changes
-   - list_changed_files() to see all files in the PR
-   - search_code() to find related code, callers, or tests
-3. When you have enough context, call submit_review() with your findings
-
-**ONLY report these defect categories:**
-- Bugs and logic errors
-- Security vulnerabilities
-- Data races and concurrency issues
-- Resource leaks (file handles, connections, memory)
-- Unhandled error paths (missing error checks, swallowed exceptions)
-- API contract violations (wrong types, missing required fields, broken invariants)
-
-**Do NOT report:**
-- Style, formatting, or naming
-- "Consider doing X" suggestions
-- Missing tests or documentation
-- Performance unless it's a clear algorithmic bug
-
-Rules:
-- Line numbers reference the new file (right side of diff)
-- Only comment on lines within diff hunks
-- Include <!-- guardrails-review --> at the start of your summary\
-"""
-
-_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
-
-
-def _build_user_content(
-    diff: str,
-    config: ReviewConfig,
-    pr_meta: dict[str, str],
-) -> str:
-    """Build the user message content shared by oneshot and agentic modes."""
-    parts = [
-        f"# PR: {pr_meta.get('title', 'Untitled')}",
-        "",
-        pr_meta.get("body", "") or "(no description)",
-        "",
-        "## Diff",
-        "",
-        diff[: config.max_diff_chars],
-    ]
-    if config.extra_instructions:
-        parts = [
-            f"## Project-specific instructions\n\n{config.extra_instructions}",
-            "",
-            *parts,
-        ]
-    return "\n".join(parts)
-
-
-def build_messages(
-    diff: str,
-    config: ReviewConfig,
-    pr_meta: dict[str, str],
-) -> list[dict[str, str]]:
-    """Build the message list for the LLM call."""
-    return [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": _build_user_content(diff, config, pr_meta)},
-    ]
-
-
-def build_agentic_messages(
-    diff: str,
-    config: ReviewConfig,
-    pr_meta: dict[str, str],
-) -> list[dict[str, Any]]:
-    """Build the message list for the agentic tool-use review loop."""
-    return [
-        {"role": "system", "content": _AGENTIC_SYSTEM_PROMPT},
-        {"role": "user", "content": _build_user_content(diff, config, pr_meta)},
-    ]
-
-
-def parse_response(raw: str, model: str, pr: int) -> ReviewResult:
-    """Parse LLM response JSON into a ReviewResult.
-
-    Falls back gracefully for malformed responses.
-    """
-    timestamp = datetime.now(tz=UTC).isoformat()
-
-    parsed = _try_parse_json(raw)
-    if parsed is None:
-        return ReviewResult(
-            verdict="request_changes",
-            summary=f"{REVIEW_MARKER}\nReview produced non-JSON output:\n\n{raw}",
-            comments=[],
-            model=model,
-            timestamp=timestamp,
-            pr=pr,
-        )
-
-    return _build_result_from_parsed(parsed, model, pr, timestamp)
-
-
-def parse_submit_review_args(arguments: str, model: str, pr: int) -> ReviewResult:
-    """Parse the submit_review tool call arguments into a ReviewResult."""
-    timestamp = datetime.now(tz=UTC).isoformat()
-    parsed = json.loads(arguments)
-    return _build_result_from_parsed(parsed, model, pr, timestamp)
-
-
-def _build_result_from_parsed(
-    parsed: dict[str, Any], model: str, pr: int, timestamp: str
-) -> ReviewResult:
-    """Build a ReviewResult from a parsed JSON dict."""
-    comments = [
-        ReviewComment(
-            path=c.get("path", ""),
-            line=c.get("line", 0),
-            body=(
-                f"{REVIEW_MARKER}\n{c.get('body', '')}"
-                if REVIEW_MARKER not in c.get("body", "")
-                else c.get("body", "")
-            ),
-            severity="error",
-            start_line=c.get("start_line"),
-        )
-        for c in parsed.get("comments", [])
-        if c.get("path") and c.get("line")
-    ]
-
-    verdict = parsed.get("verdict", "request_changes")
-    if verdict not in ("approve", "request_changes"):
-        verdict = "request_changes"
-
-    summary = parsed.get("summary", "No summary provided.")
-    if REVIEW_MARKER not in summary:
-        summary = f"{REVIEW_MARKER}\n{summary}"
-
-    return ReviewResult(
-        verdict=verdict,
-        summary=summary,
-        comments=comments,
-        model=model,
-        timestamp=timestamp,
-        pr=pr,
-    )
-
-
-def _try_parse_json(raw: str) -> dict[str, Any] | None:
-    """Attempt to parse JSON, trying raw first then extracting from code blocks."""
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    match = _JSON_BLOCK_RE.search(raw)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-    return None
 
 
 def validate_comments(
@@ -444,7 +244,7 @@ def _run_oneshot_review(
     pr_meta: dict[str, str],
     pr: int,
 ) -> ReviewResult:
-    """Run the original single-shot review (diff → LLM JSON → result)."""
+    """Run the original single-shot review (diff -> LLM JSON -> result)."""
     messages = build_messages(diff, config, pr_meta)
     raw_response = call_openrouter(messages, config.model)
     return parse_response(raw_response, config.model, pr)
@@ -516,19 +316,30 @@ def _run_agentic_review(
                 )
             continue
 
-        # No tool calls — model returned content directly (fallback parse)
+        # No tool calls -- model returned content directly (fallback parse)
         if response.content:
             return parse_response(response.content, config.model, pr)
 
-        # Empty response — shouldn't happen, but handle gracefully
+        # Empty response -- shouldn't happen, but handle gracefully
         break
 
-    # Max iterations exhausted without submit_review — parse last content if available
+    # Max iterations exhausted without submit_review
     logger.warning(
-        "Agentic loop exhausted %d iterations without submit_review",
+        "Agentic loop exhausted %d iterations without conclusion",
         config.max_iterations,
     )
-    return parse_response("", config.model, pr)
+    return ReviewResult(
+        verdict="request_changes",
+        summary=(
+            f"{REVIEW_MARKER}\n"
+            f"Review loop exhausted after {config.max_iterations} "
+            f"iterations without reaching a conclusion."
+        ),
+        comments=[],
+        model=config.model,
+        timestamp=datetime.now(tz=UTC).isoformat(),
+        pr=pr,
+    )
 
 
 def _compute_verdict(comments: list[ReviewComment]) -> str:
