@@ -23,11 +23,7 @@ index abc1234..def5678 100644
     result = parse_diff_hunks(diff)
     assert "src/main.py" in result
     lines = result["src/main.py"]
-    # Context lines: 10, 11 (keep1, keep2)
-    # Addition: 12 (new_line)
-    # Context: 13 (keep3)
-    # Deletion: no right-side line
-    # Context: 14 (keep4)
+    # Right-side lines: 10-11 context, 12 added, 13-14 context (deletion skipped)
     assert lines == {10, 11, 12, 13, 14}
 
 
