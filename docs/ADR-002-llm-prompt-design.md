@@ -22,10 +22,11 @@ GitHub's pull request review API returns 422 for comments on lines outside the d
 After LLM response, we validate each comment's `line` against parsed diff hunks.
 Invalid-line comments are moved to the review body as text (not silently dropped).
 
-### Severity levels
+### Severity model
 
-Three levels: `error` (must fix), `warning` (should fix), `info` (suggestion).
-Only `error` triggers `request_changes` by default (configurable via `severity_threshold`).
+One level: `error`. Every reported defect is an error. There are no warnings,
+no info-level comments, no configurable severity threshold. A defect is reported
+or it is not. Any comments trigger `request_changes`; zero comments trigger `approve`.
 
 ### Malformed response fallback
 
