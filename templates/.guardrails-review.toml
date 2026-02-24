@@ -8,6 +8,8 @@ model = ""  # REQUIRED — e.g. "minimax/minimax-m2.5", "anthropic/claude-sonnet
 auto_approve = true
 severity_threshold = "error"  # "error" = only errors block, "warning" = warnings block too
 # max_diff_chars = 120000
+agentic = true          # Enable tool-use loop for context-gathering before review
+# max_iterations = 5    # Max tool-use rounds before forcing review submission
 
 extra_instructions = """
 Focus areas:

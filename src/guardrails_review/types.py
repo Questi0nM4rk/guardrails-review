@@ -14,6 +14,26 @@ class ReviewConfig:
     auto_approve: bool = True
     severity_threshold: str = "error"
     max_diff_chars: int = 120_000
+    agentic: bool = True
+    max_iterations: int = 5
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """A single tool call from the LLM response."""
+
+    id: str
+    name: str
+    arguments: str  # raw JSON string
+
+
+@dataclass(frozen=True)
+class LLMResponse:
+    """Structured response from the LLM, supporting both content and tool calls."""
+
+    content: str | None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    finish_reason: str = "stop"
 
 
 @dataclass(frozen=True)

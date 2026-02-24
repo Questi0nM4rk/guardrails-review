@@ -25,6 +25,8 @@ auto_approve = false
 severity_threshold = "warning"
 max_diff_chars = 50000
 extra_instructions = "Focus on security."
+agentic = false
+max_iterations = 3
 """
     )
 
@@ -35,6 +37,8 @@ extra_instructions = "Focus on security."
     assert result.severity_threshold == "warning"
     assert result.max_diff_chars == 50000
     assert result.extra_instructions == "Focus on security."
+    assert result.agentic is False
+    assert result.max_iterations == 3
 
 
 def test_load_config_minimal(tmp_path: Path) -> None:
@@ -54,6 +58,8 @@ model = "openai/gpt-4o"
     assert result.auto_approve is True
     assert result.severity_threshold == "error"
     assert result.max_diff_chars == 120_000
+    assert result.agentic is True
+    assert result.max_iterations == 5
 
 
 def test_load_config_missing_file(tmp_path: Path) -> None:
@@ -101,3 +107,27 @@ auto_approve = true
 
     with pytest.raises(ValueError, match="model"):
         load_config(tmp_path)
+
+
+def test_load_config_agentic_defaults(tmp_path: Path) -> None:
+    """Agentic mode defaults to True with 5 iterations when not specified."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text('[config]\nmodel = "test/m"\n')
+
+    result = load_config(tmp_path)
+
+    assert result.agentic is True
+    assert result.max_iterations == 5
+
+
+def test_load_config_agentic_disabled(tmp_path: Path) -> None:
+    """Agentic mode can be explicitly disabled."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text(
+        '[config]\nmodel = "test/m"\n\n[review]\nagentic = false\nmax_iterations = 10\n'
+    )
+
+    result = load_config(tmp_path)
+
+    assert result.agentic is False
+    assert result.max_iterations == 10

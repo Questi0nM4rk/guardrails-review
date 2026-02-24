@@ -7,12 +7,15 @@ import subprocess
 
 from guardrails_review.reviewer import (
     _compute_verdict,
+    _run_agentic_review,
+    build_agentic_messages,
     build_messages,
     parse_response,
+    parse_submit_review_args,
     run_review,
     validate_comments,
 )
-from guardrails_review.types import ReviewComment, ReviewConfig
+from guardrails_review.types import LLMResponse, ReviewComment, ReviewConfig, ToolCall
 
 
 def test_build_messages_basic():
@@ -44,6 +47,16 @@ def test_build_messages_truncates_diff():
     # The diff portion should be truncated
     assert "x" * 100 not in messages[1]["content"]
     assert "x" * 10 in messages[1]["content"]
+
+
+def test_build_agentic_messages_uses_agentic_prompt():
+    """Agentic messages use the agentic system prompt with tool instructions."""
+    config = ReviewConfig(model="test/model")
+    messages = build_agentic_messages("diff", config, {"title": "T", "body": ""})
+
+    assert len(messages) == 2
+    assert "tools" in messages[0]["content"].lower()
+    assert "submit_review" in messages[0]["content"]
 
 
 def test_parse_response_valid_json():
@@ -120,6 +133,24 @@ def test_parse_response_skips_incomplete_comments():
     assert result.comments[0].body == "valid"
 
 
+def test_parse_submit_review_args():
+    """parse_submit_review_args builds ReviewResult from tool call arguments."""
+    args = json.dumps(
+        {
+            "verdict": "approve",
+            "summary": "<!-- guardrails-review -->\nLooks good",
+            "comments": [{"path": "f.py", "line": 5, "severity": "info", "body": "nice"}],
+        }
+    )
+
+    result = parse_submit_review_args(args, "test/model", 42)
+
+    assert result.verdict == "approve"
+    assert "Looks good" in result.summary
+    assert len(result.comments) == 1
+    assert result.pr == 42
+
+
 def test_validate_comments_splits_correctly():
     """Comments are split into valid and invalid based on diff lines."""
     valid_lines = {"foo.py": {10, 11, 12}, "bar.py": {5}}
@@ -186,10 +217,15 @@ def _make_gh_mock(responses: dict[str, tuple[int, str]]):
     return mock_run
 
 
+# --- Oneshot run_review tests (agentic=False) ---
+
+
 def test_run_review_dry_run(tmp_path, monkeypatch, capsys):
     """Dry run prints result without posting to GitHub."""
     config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nauto_approve = true\n')
+    config_file.write_text(
+        '[config]\nmodel = "test/m"\n[review]\nauto_approve = true\nagentic = false\n'
+    )
     monkeypatch.chdir(tmp_path)
 
     diff_text = (
@@ -228,7 +264,9 @@ def test_run_review_dry_run(tmp_path, monkeypatch, capsys):
 def test_run_review_posts_and_caches(tmp_path, monkeypatch):
     """Full review posts to GitHub and saves to cache."""
     config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nauto_approve = true\n')
+    config_file.write_text(
+        '[config]\nmodel = "test/m"\n[review]\nauto_approve = true\nagentic = false\n'
+    )
 
     diff_text = (
         "diff --git a/foo.py b/foo.py\n"
@@ -272,7 +310,9 @@ def test_run_review_posts_and_caches(tmp_path, monkeypatch):
 def test_run_review_invalid_lines_in_summary(tmp_path, monkeypatch, capsys):
     """Comments on invalid lines are moved to the review summary."""
     config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nauto_approve = true\n')
+    config_file.write_text(
+        '[config]\nmodel = "test/m"\n[review]\nauto_approve = true\nagentic = false\n'
+    )
 
     diff_text = (
         "diff --git a/foo.py b/foo.py\n"
@@ -302,3 +342,219 @@ def test_run_review_invalid_lines_in_summary(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "outside diff" in captured.out
     assert "foo.py:999" in captured.out
+
+
+def test_oneshot_still_works(tmp_path, monkeypatch, capsys):
+    """Explicit agentic=false still uses oneshot path and produces correct results."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text(
+        '[config]\nmodel = "test/m"\n[review]\nauto_approve = true\nagentic = false\n'
+    )
+
+    diff_text = (
+        "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+    )
+    llm_response = json.dumps(
+        {
+            "verdict": "approve",
+            "summary": "<!-- guardrails-review -->\nAll clear",
+            "comments": [],
+        }
+    )
+
+    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(
+        "guardrails_review.reviewer.get_pr_metadata",
+        lambda pr: {
+            "title": "T",
+            "body": "",
+            "headRefOid": "sha",
+            "baseRefName": "main",
+        },
+    )
+    monkeypatch.setattr(
+        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
+    )
+
+    result = run_review(1, dry_run=True, project_dir=tmp_path)
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "approve" in captured.out
+    assert "All clear" in captured.out
+
+
+# --- Agentic review tests ---
+
+
+_REVIEWER = "guardrails_review.reviewer"
+
+
+def test_agentic_loop_calls_tools_then_submits(monkeypatch):
+    """Agentic loop executes tools then processes submit_review to produce ReviewResult."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
+    diff = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+    pr_meta = {"title": "T", "body": "", "headRefOid": "sha123", "baseRefName": "main"}
+
+    call_count = {"n": 0}
+
+    def fake_call_openrouter_tools(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(id="c1", name="read_file", arguments='{"path": "f.py"}'),
+                ],
+                finish_reason="tool_calls",
+            )
+        return LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="c2",
+                    name="submit_review",
+                    arguments=json.dumps(
+                        {
+                            "verdict": "approve",
+                            "summary": "<!-- guardrails-review -->\nLGTM",
+                            "comments": [],
+                        }
+                    ),
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call_openrouter_tools)
+    monkeypatch.setattr(f"{_REVIEWER}.execute_tool", lambda n, a, c: "1: code\n")
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=42)
+
+    assert result.verdict == "approve"
+    assert "LGTM" in result.summary
+    assert call_count["n"] == 2
+
+
+def test_agentic_loop_max_iterations_forces_submit(monkeypatch):
+    """When max_iterations is reached, tool_choice forces submit_review."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=2)
+    diff = "diff --git a/f.py b/f.py\n"
+    pr_meta = {
+        "title": "T",
+        "body": "",
+        "headRefOid": "sha",
+        "baseRefName": "main",
+    }
+
+    call_count = {"n": 0}
+    captured_tool_choice = {"val": None}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        captured_tool_choice["val"] = tool_choice
+        if call_count["n"] == 1:
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(id="c1", name="read_file", arguments='{"path": "f.py"}'),
+                ],
+                finish_reason="tool_calls",
+            )
+        return LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="c2",
+                    name="submit_review",
+                    arguments=json.dumps(
+                        {
+                            "verdict": "request_changes",
+                            "summary": "<!-- guardrails-review -->\nNeeds work",
+                            "comments": [],
+                        }
+                    ),
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+    monkeypatch.setattr(f"{_REVIEWER}.execute_tool", lambda n, a, c: "content")
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    assert result.verdict == "request_changes"
+    assert call_count["n"] == 2
+    assert captured_tool_choice["val"] is not None
+    assert captured_tool_choice["val"]["function"]["name"] == "submit_review"
+
+
+def test_agentic_fallback_to_oneshot(monkeypatch):
+    """When agentic API call raises RuntimeError, falls back to oneshot."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
+    diff = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+    pr_meta = {
+        "title": "T",
+        "body": "",
+        "headRefOid": "sha",
+        "baseRefName": "main",
+    }
+
+    _api_err = "API error 400: tools not supported"
+
+    def fake_call_tools(messages, model, *, tools, tool_choice=None):
+        raise RuntimeError(_api_err)
+
+    def fake_call(messages, model):
+        return json.dumps(
+            {
+                "verdict": "approve",
+                "summary": "<!-- guardrails-review -->\nFallback review",
+                "comments": [],
+            }
+        )
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call_tools)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    assert result.verdict == "approve"
+    assert "Fallback review" in result.summary
+
+
+def test_agentic_content_response_fallback(monkeypatch):
+    """Model returning content instead of tool calls in agentic mode is parsed as JSON."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
+    diff = "diff --git a/f.py b/f.py\n"
+    pr_meta = {
+        "title": "T",
+        "body": "",
+        "headRefOid": "sha",
+        "baseRefName": "main",
+    }
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        return LLMResponse(
+            content=json.dumps(
+                {
+                    "verdict": "approve",
+                    "summary": "<!-- guardrails-review -->\nDirect content",
+                    "comments": [],
+                }
+            ),
+            tool_calls=[],
+            finish_reason="stop",
+        )
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    assert result.verdict == "approve"
+    assert "Direct content" in result.summary

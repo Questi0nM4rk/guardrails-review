@@ -50,4 +50,6 @@ def load_config(project_dir: Path | None = None) -> ReviewConfig:
         auto_approve=review_section.get("auto_approve", True),
         severity_threshold=review_section.get("severity_threshold", "error"),
         max_diff_chars=review_section.get("max_diff_chars", 120_000),
+        agentic=review_section.get("agentic", True),
+        max_iterations=review_section.get("max_iterations", 5),
     )
