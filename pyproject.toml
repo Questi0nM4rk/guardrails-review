@@ -1,0 +1,47 @@
+[project]
+name = "guardrails-review"
+version = "0.1.0"
+description = "LLM-powered PR reviewer with auto-approve and inline comments"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Questi0nM4rk" }]
+readme = "README.md"
+# ZERO runtime dependencies — stdlib only (tomllib is 3.11+, urllib.request for HTTP)
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=4.0", "ruff>=0.4"]
+
+[project.scripts]
+guardrails-review = "guardrails_review.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/guardrails_review"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+pydocstyle.convention = "google"
+ignore = [
+  "COM812", "ISC001",     # formatter conflicts
+  "T201",                  # print (CLI tool)
+  "D203", "D213",         # docstring conflicts
+]
+
+[tool.pyright]
+include = ["src/guardrails_review"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
