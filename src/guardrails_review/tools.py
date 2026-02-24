@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from guardrails_review.github import run_gh
 
@@ -22,7 +23,7 @@ class ToolContext:
     commit_sha: str
 
 
-TOOL_DEFINITIONS: list[dict] = [
+TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
         "type": "function",
         "function": {
@@ -160,7 +161,7 @@ def execute_tool(name: str, arguments: str, ctx: ToolContext) -> str:
     return handler(args, ctx)
 
 
-def _read_file(args: dict, ctx: ToolContext) -> str:
+def _read_file(args: dict[str, Any], ctx: ToolContext) -> str:
     """Read a file from the repo at the PR head commit."""
     path = args["path"]
     try:
@@ -179,7 +180,7 @@ def _read_file(args: dict, ctx: ToolContext) -> str:
 
     try:
         content = base64.b64decode(proc.stdout.strip()).decode(errors="replace")
-    except Exception:  # noqa: BLE001 — graceful fallback for encoding issues
+    except (ValueError, UnicodeDecodeError):
         return f"Error decoding {path}: could not base64-decode response"
 
     lines = content.splitlines()
@@ -195,7 +196,7 @@ def _read_file(args: dict, ctx: ToolContext) -> str:
     return "\n".join(numbered)
 
 
-def _list_changed_files(_args: dict, ctx: ToolContext) -> str:
+def _list_changed_files(_args: dict[str, Any], ctx: ToolContext) -> str:
     """List files changed in the PR."""
     try:
         proc = run_gh("pr", "view", str(ctx.pr), "--json", "files")
@@ -216,7 +217,7 @@ def _list_changed_files(_args: dict, ctx: ToolContext) -> str:
     return "\n".join(lines)
 
 
-def _search_code(args: dict, ctx: ToolContext) -> str:
+def _search_code(args: dict[str, Any], ctx: ToolContext) -> str:
     """Search for code in the repository."""
     query = args["query"]
     search_query = f"{query} repo:{ctx.owner}/{ctx.repo}"

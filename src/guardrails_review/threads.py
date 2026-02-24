@@ -5,11 +5,14 @@ from __future__ import annotations
 import logging
 
 from guardrails_review.github import graphql
-from guardrails_review.types import ReviewComment, ReviewThread, ThreadResolution
+from guardrails_review.types import (
+    REVIEW_MARKER,
+    ReviewComment,
+    ReviewThread,
+    ThreadResolution,
+)
 
 logger = logging.getLogger(__name__)
-
-_MARKER = "<!-- guardrails-review -->"
 
 _THREADS_QUERY = """\
 query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
@@ -98,7 +101,7 @@ def get_our_threads(threads: list[ReviewThread]) -> list[ReviewThread]:
     Returns:
         Threads that contain the ``<!-- guardrails-review -->`` marker.
     """
-    return [t for t in threads if _MARKER in t.body]
+    return [t for t in threads if REVIEW_MARKER in t.body]
 
 
 def find_resolvable_threads(
@@ -160,7 +163,8 @@ def deduplicate_comments(
 ) -> list[ReviewComment]:
     """Remove new comments that duplicate existing unresolved threads.
 
-    Matches on (path, line, body) tuple.
+    Matches on (path, line) only -- LLM text is non-deterministic so exact
+    body match is unreliable.
 
     Args:
         new_comments: Comments about to be posted.
@@ -169,13 +173,5 @@ def deduplicate_comments(
     Returns:
         Filtered list of comments with duplicates removed.
     """
-    existing_keys = {
-        (t.path, t.line, t.body)
-        for t in existing_threads
-        if not t.is_resolved
-    }
-
-    return [
-        c for c in new_comments
-        if (c.path, c.line, c.body) not in existing_keys
-    ]
+    existing = {(t.path, t.line) for t in existing_threads if not t.is_resolved}
+    return [c for c in new_comments if (c.path, c.line) not in existing]

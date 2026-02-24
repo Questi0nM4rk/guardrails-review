@@ -39,6 +39,9 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="MSG",
         help="Request changes instead of approving",
     )
+    approve_p.add_argument(
+        "--dry-run", action="store_true", help="Print action without calling API"
+    )
 
     # resolve
     resolve_p = sub.add_parser("resolve", help="Auto-resolve stale review threads")
@@ -91,6 +94,13 @@ def _cmd_comments(args: argparse.Namespace) -> int:
 
 
 def _cmd_approve(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        if args.request_changes_msg:
+            print(f"Would request changes on PR #{args.pr}: {args.request_changes_msg}")
+        else:
+            print(f"Would approve PR #{args.pr}")
+        return 0
+
     if args.request_changes_msg:
         request_changes(args.pr, args.request_changes_msg)
         print(f"Requested changes on PR #{args.pr}")

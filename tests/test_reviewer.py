@@ -7,15 +7,24 @@ import subprocess
 
 from guardrails_review.reviewer import (
     _compute_verdict,
+    _print_dry_run,
     _run_agentic_review,
     build_agentic_messages,
     build_messages,
     parse_response,
     parse_submit_review_args,
+    run_resolve,
     run_review,
     validate_comments,
 )
-from guardrails_review.types import LLMResponse, ReviewComment, ReviewConfig, ToolCall
+from guardrails_review.types import (
+    LLMResponse,
+    ReviewComment,
+    ReviewConfig,
+    ReviewResult,
+    ReviewThread,
+    ToolCall,
+)
 
 
 def test_build_messages_basic():
@@ -213,9 +222,7 @@ def _make_gh_mock(responses: dict[str, tuple[int, str]]):
 def test_run_review_dry_run(tmp_path, monkeypatch, capsys):
     """Dry run prints result without posting to GitHub."""
     config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
-    )
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
     monkeypatch.chdir(tmp_path)
 
     diff_text = (
@@ -254,9 +261,7 @@ def test_run_review_dry_run(tmp_path, monkeypatch, capsys):
 def test_run_review_posts_and_caches(tmp_path, monkeypatch):
     """Full review posts to GitHub and saves to cache."""
     config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
-    )
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
 
     diff_text = (
         "diff --git a/foo.py b/foo.py\n"
@@ -305,9 +310,7 @@ def test_run_review_posts_and_caches(tmp_path, monkeypatch):
 def test_run_review_sets_commit_status(tmp_path, monkeypatch):
     """run_review sets pending status before and success/failure after."""
     config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
-    )
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
 
     diff_text = (
         "diff --git a/foo.py b/foo.py\n"
@@ -345,9 +348,7 @@ def test_run_review_sets_commit_status(tmp_path, monkeypatch):
 def test_run_review_status_failure_does_not_block(tmp_path, monkeypatch, capsys):
     """If set_commit_status raises, the review still completes."""
     config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
-    )
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
 
     diff_text = (
         "diff --git a/foo.py b/foo.py\n"
@@ -384,9 +385,7 @@ def test_run_review_status_failure_does_not_block(tmp_path, monkeypatch, capsys)
 def test_run_review_dry_run_skips_status(tmp_path, monkeypatch, capsys):
     """Dry run does not set commit status."""
     config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
-    )
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
 
     diff_text = (
         "diff --git a/foo.py b/foo.py\n"
@@ -418,9 +417,7 @@ def test_run_review_dry_run_skips_status(tmp_path, monkeypatch, capsys):
 def test_run_review_invalid_lines_in_summary(tmp_path, monkeypatch, capsys):
     """Comments on invalid lines are moved to the review summary."""
     config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
-    )
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
 
     diff_text = (
         "diff --git a/foo.py b/foo.py\n"
@@ -455,9 +452,7 @@ def test_run_review_invalid_lines_in_summary(tmp_path, monkeypatch, capsys):
 def test_oneshot_still_works(tmp_path, monkeypatch, capsys):
     """Explicit agentic=false still uses oneshot path and produces correct results."""
     config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
-    )
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
 
     diff_text = (
         "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
@@ -752,3 +747,249 @@ def test_agentic_content_response_fallback(monkeypatch):
 
     assert result.verdict == "approve"
     assert "Direct content" in result.summary
+
+
+# --- _print_dry_run tests ---
+
+
+def test_print_dry_run_output(capsys):
+    """_print_dry_run prints verdict, model, summary, and comments."""
+    result = ReviewResult(
+        verdict="request_changes",
+        summary="<!-- guardrails-review -->\nFound bugs",
+        comments=[
+            ReviewComment(path="f.py", line=10, body="Bug here", severity="error"),
+        ],
+        model="test/m",
+        timestamp="2024-01-01T00:00:00Z",
+        pr=42,
+    )
+
+    _print_dry_run(result)
+
+    captured = capsys.readouterr()
+    assert "Dry Run: PR #42" in captured.out
+    assert "request_changes" in captured.out
+    assert "test/m" in captured.out
+    assert "Found bugs" in captured.out
+    assert "1 inline comment(s)" in captured.out
+    assert "f.py:10" in captured.out
+
+
+def test_print_dry_run_no_comments(capsys):
+    """_print_dry_run with no comments does not print comments section."""
+    result = ReviewResult(
+        verdict="approve",
+        summary="<!-- guardrails-review -->\nClean",
+        comments=[],
+        model="test/m",
+        timestamp="2024-01-01T00:00:00Z",
+        pr=1,
+    )
+
+    _print_dry_run(result)
+
+    captured = capsys.readouterr()
+    assert "approve" in captured.out
+    assert "inline comment" not in captured.out
+
+
+# --- run_resolve non-dry-run tests ---
+
+
+def _make_thread(**kwargs):
+    defaults = {
+        "thread_id": "t1",
+        "path": "f.py",
+        "line": 10,
+        "body": "<!-- guardrails-review -->\nBug",
+        "is_resolved": False,
+        "is_outdated": False,
+        "author": "bot",
+        "created_at": "2024-01-01T00:00:00Z",
+    }
+    defaults.update(kwargs)
+    return ReviewThread(**defaults)
+
+
+def test_run_resolve_resolves_threads(monkeypatch, capsys):
+    """run_resolve in non-dry-run mode calls resolve_thread for each resolvable thread."""
+    threads = [
+        _make_thread(thread_id="t1", path="deleted.py", line=5),
+        _make_thread(thread_id="t2", path="current.py", line=2),  # line 2 is in diff
+    ]
+
+    resolved_ids = []
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_pr_metadata",
+        lambda pr: {"title": "T", "body": "", "headRefOid": "sha", "baseRefName": "main"},
+    )
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_pr_diff",
+        lambda pr: (
+            "diff --git a/current.py b/current.py\n"
+            "--- a/current.py\n+++ b/current.py\n"
+            "@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+        ),
+    )
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_deleted_files",
+        lambda pr: {"deleted.py"},
+    )
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads",
+        lambda pr, owner, repo: threads,
+    )
+    monkeypatch.setattr(
+        f"{_REVIEWER}.resolve_thread",
+        lambda tid: resolved_ids.append(tid) or True,
+    )
+
+    result = run_resolve(42)
+
+    assert result == 0
+    assert "t1" in resolved_ids
+    assert "t2" not in resolved_ids
+    captured = capsys.readouterr()
+    assert "Resolved 1/1" in captured.out
+
+
+def test_run_resolve_handles_failed_resolution(monkeypatch, capsys):
+    """run_resolve logs warning when resolve_thread returns False."""
+    threads = [
+        _make_thread(thread_id="t1", path="deleted.py", line=5),
+    ]
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_pr_metadata",
+        lambda pr: {"title": "T", "body": "", "headRefOid": "sha", "baseRefName": "main"},
+    )
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_pr_diff",
+        lambda pr: "diff --git a/x.py b/x.py\n",
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: {"deleted.py"})
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: threads)
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: False)
+
+    result = run_resolve(42)
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "Resolved 0/1" in captured.out
+
+
+# --- Dedup path in run_review ---
+
+
+def test_run_review_dedup_removes_duplicate_comments(tmp_path, monkeypatch, capsys):
+    """run_review deduplicates comments against existing threads on same path+line."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
+
+    diff_text = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n+++ b/foo.py\n"
+        "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
+    )
+    pr_meta = {"title": "T", "body": "", "headRefOid": "sha", "baseRefName": "main"}
+    # LLM returns a comment on foo.py:2 which already exists as an unresolved thread
+    llm_response = json.dumps(
+        {
+            "verdict": "request_changes",
+            "summary": "<!-- guardrails-review -->\nFound issue",
+            "comments": [
+                {"path": "foo.py", "line": 2, "body": "Bug on this line"},
+            ],
+        }
+    )
+
+    existing_threads = [
+        _make_thread(
+            thread_id="existing-t1",
+            path="foo.py",
+            line=2,
+            body="<!-- guardrails-review -->\nPrevious finding on same line",
+        ),
+    ]
+
+    posted = []
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(
+        f"{_REVIEWER}.post_review",
+        lambda pr, result, owner, repo, sha: posted.append(result) or True,
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads",
+        lambda pr, owner, repo: existing_threads,
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
+
+    result = run_review(53, project_dir=tmp_path)
+
+    assert result == 0
+    assert len(posted) == 1
+    # The duplicate comment should have been removed, so no inline comments posted
+    assert len(posted[0].comments) == 0
+    # With 0 comments, verdict should be approve
+    assert posted[0].verdict == "approve"
+
+
+# --- Auto-resolve path in run_review ---
+
+
+def test_run_review_auto_resolves_stale_threads(tmp_path, monkeypatch, capsys):
+    """run_review auto-resolves threads on deleted files after posting review."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
+
+    diff_text = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n+++ b/foo.py\n"
+        "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
+    )
+    pr_meta = {"title": "T", "body": "", "headRefOid": "sha", "baseRefName": "main"}
+    llm_response = json.dumps(
+        {
+            "verdict": "approve",
+            "summary": "<!-- guardrails-review -->\nLGTM",
+            "comments": [],
+        }
+    )
+
+    # Existing thread on a file that has been deleted
+    existing_threads = [
+        _make_thread(thread_id="stale-t1", path="removed.py", line=5),
+    ]
+
+    resolved_ids = []
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(
+        f"{_REVIEWER}.post_review",
+        lambda pr, result, owner, repo, sha: True,
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads",
+        lambda pr, owner, repo: existing_threads,
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: {"removed.py"})
+    monkeypatch.setattr(
+        f"{_REVIEWER}.resolve_thread",
+        lambda tid: resolved_ids.append(tid) or True,
+    )
+
+    result = run_review(53, project_dir=tmp_path)
+
+    assert result == 0
+    assert "stale-t1" in resolved_ids

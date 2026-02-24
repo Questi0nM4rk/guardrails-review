@@ -347,8 +347,8 @@ def test_find_resolvable_skips_already_resolved():
 # --- deduplicate_comments ---
 
 
-def test_deduplicate_removes_exact_match():
-    """Comment with same path+line+body as existing thread is removed."""
+def test_deduplicate_removes_match_on_path_and_line():
+    """Comment with same path+line as existing thread is removed regardless of body."""
     new_comments = [
         ReviewComment(
             path="f.py",
@@ -380,6 +380,34 @@ def test_deduplicate_removes_exact_match():
 
     assert len(deduped) == 1
     assert deduped[0].line == 20
+
+
+def test_deduplicate_different_body_same_location_still_deduped():
+    """Comment on same path+line but different body is still deduped."""
+    new_comments = [
+        ReviewComment(
+            path="f.py",
+            line=10,
+            body="<!-- guardrails-review -->\nNew wording for same bug",
+            severity="error",
+        ),
+    ]
+    existing = [
+        ReviewThread(
+            thread_id="t1",
+            path="f.py",
+            line=10,
+            body="<!-- guardrails-review -->\nOriginal wording",
+            is_resolved=False,
+            is_outdated=False,
+            author="bot",
+            created_at="2024-01-01T00:00:00Z",
+        ),
+    ]
+
+    deduped = deduplicate_comments(new_comments, existing)
+
+    assert len(deduped) == 0
 
 
 def test_deduplicate_ignores_resolved():

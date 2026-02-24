@@ -331,9 +331,7 @@ def test_graphql_with_variables(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_resolve_thread_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_thread calls GraphQL mutation and returns True."""
-    response = {
-        "data": {"resolveReviewThread": {"thread": {"id": "t1", "isResolved": True}}}
-    }
+    response = {"data": {"resolveReviewThread": {"thread": {"id": "t1", "isResolved": True}}}}
 
     def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         return _make_completed_process(stdout=json.dumps(response))

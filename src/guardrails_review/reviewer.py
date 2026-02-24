@@ -28,7 +28,13 @@ from guardrails_review.threads import (
     get_review_threads,
 )
 from guardrails_review.tools import TOOL_DEFINITIONS, ToolContext, execute_tool
-from guardrails_review.types import ReviewComment, ReviewConfig, ReviewResult
+from guardrails_review.types import (
+    REVIEW_MARKER,
+    ReviewComment,
+    ReviewConfig,
+    ReviewResult,
+    ReviewThread,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -105,13 +111,13 @@ Rules:
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 
-def build_messages(
+def _build_user_content(
     diff: str,
     config: ReviewConfig,
     pr_meta: dict[str, str],
-) -> list[dict[str, str]]:
-    """Build the message list for the LLM call."""
-    user_parts = [
+) -> str:
+    """Build the user message content shared by oneshot and agentic modes."""
+    parts = [
         f"# PR: {pr_meta.get('title', 'Untitled')}",
         "",
         pr_meta.get("body", "") or "(no description)",
@@ -121,14 +127,23 @@ def build_messages(
         diff[: config.max_diff_chars],
     ]
     if config.extra_instructions:
-        user_parts = [
+        parts = [
             f"## Project-specific instructions\n\n{config.extra_instructions}",
             "",
-            *user_parts,
+            *parts,
         ]
+    return "\n".join(parts)
+
+
+def build_messages(
+    diff: str,
+    config: ReviewConfig,
+    pr_meta: dict[str, str],
+) -> list[dict[str, str]]:
+    """Build the message list for the LLM call."""
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": "\n".join(user_parts)},
+        {"role": "user", "content": _build_user_content(diff, config, pr_meta)},
     ]
 
 
@@ -138,24 +153,9 @@ def build_agentic_messages(
     pr_meta: dict[str, str],
 ) -> list[dict[str, Any]]:
     """Build the message list for the agentic tool-use review loop."""
-    user_parts = [
-        f"# PR: {pr_meta.get('title', 'Untitled')}",
-        "",
-        pr_meta.get("body", "") or "(no description)",
-        "",
-        "## Diff",
-        "",
-        diff[: config.max_diff_chars],
-    ]
-    if config.extra_instructions:
-        user_parts = [
-            f"## Project-specific instructions\n\n{config.extra_instructions}",
-            "",
-            *user_parts,
-        ]
     return [
         {"role": "system", "content": _AGENTIC_SYSTEM_PROMPT},
-        {"role": "user", "content": "\n".join(user_parts)},
+        {"role": "user", "content": _build_user_content(diff, config, pr_meta)},
     ]
 
 
@@ -170,7 +170,7 @@ def parse_response(raw: str, model: str, pr: int) -> ReviewResult:
     if parsed is None:
         return ReviewResult(
             verdict="request_changes",
-            summary=f"<!-- guardrails-review -->\nReview produced non-JSON output:\n\n{raw}",
+            summary=f"{REVIEW_MARKER}\nReview produced non-JSON output:\n\n{raw}",
             comments=[],
             model=model,
             timestamp=timestamp,
@@ -187,16 +187,17 @@ def parse_submit_review_args(arguments: str, model: str, pr: int) -> ReviewResul
     return _build_result_from_parsed(parsed, model, pr, timestamp)
 
 
-def _build_result_from_parsed(parsed: dict, model: str, pr: int, timestamp: str) -> ReviewResult:
+def _build_result_from_parsed(
+    parsed: dict[str, Any], model: str, pr: int, timestamp: str
+) -> ReviewResult:
     """Build a ReviewResult from a parsed JSON dict."""
-    _marker = "<!-- guardrails-review -->"
     comments = [
         ReviewComment(
             path=c.get("path", ""),
             line=c.get("line", 0),
             body=(
-                f"{_marker}\n{c.get('body', '')}"
-                if _marker not in c.get("body", "")
+                f"{REVIEW_MARKER}\n{c.get('body', '')}"
+                if REVIEW_MARKER not in c.get("body", "")
                 else c.get("body", "")
             ),
             severity="error",
@@ -211,8 +212,8 @@ def _build_result_from_parsed(parsed: dict, model: str, pr: int, timestamp: str)
         verdict = "request_changes"
 
     summary = parsed.get("summary", "No summary provided.")
-    if "<!-- guardrails-review -->" not in summary:
-        summary = f"<!-- guardrails-review -->\n{summary}"
+    if REVIEW_MARKER not in summary:
+        summary = f"{REVIEW_MARKER}\n{summary}"
 
     return ReviewResult(
         verdict=verdict,
@@ -224,7 +225,7 @@ def _build_result_from_parsed(parsed: dict, model: str, pr: int, timestamp: str)
     )
 
 
-def _try_parse_json(raw: str) -> dict | None:
+def _try_parse_json(raw: str) -> dict[str, Any] | None:
     """Attempt to parse JSON, trying raw first then extracting from code blocks."""
     try:
         return json.loads(raw)
@@ -275,9 +276,9 @@ def _try_dedup(
     invalid_comments: list[ReviewComment],
     owner: str,
     repo: str,
-) -> tuple[ReviewResult, list]:
+) -> tuple[ReviewResult, list[ReviewThread]]:
     """Deduplicate comments against existing threads."""
-    our_existing: list = []
+    our_existing: list[ReviewThread] = []
     try:
         existing_threads = get_review_threads(pr, owner, repo)
         our_existing = get_our_threads(existing_threads)
@@ -304,7 +305,7 @@ def _try_dedup(
 
 def _try_auto_resolve(
     pr: int,
-    our_existing: list,
+    our_existing: list[ReviewThread],
     valid_lines: dict[str, set[int]],
     commit_sha: str,
 ) -> None:

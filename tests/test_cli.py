@@ -125,6 +125,40 @@ def test_approve_request_changes(monkeypatch, capsys):
     assert calls[0] == ("rc", 7, "Fix X")
 
 
+def test_approve_dry_run(monkeypatch, capsys):
+    """Approve --dry-run prints what would happen without calling API."""
+    calls = []
+    monkeypatch.setattr(
+        "guardrails_review.cli.approve_pr",
+        lambda pr, body: calls.append(("approve", pr, body)) or True,
+    )
+
+    result = main(["approve", "--pr", "7", "--dry-run"])
+
+    assert result == 0
+    assert len(calls) == 0
+    captured = capsys.readouterr()
+    assert "Would approve" in captured.out
+    assert "7" in captured.out
+
+
+def test_approve_request_changes_dry_run(monkeypatch, capsys):
+    """Approve --request-changes --dry-run prints without calling API."""
+    calls = []
+    monkeypatch.setattr(
+        "guardrails_review.cli.request_changes",
+        lambda pr, body: calls.append(("rc", pr, body)) or True,
+    )
+
+    result = main(["approve", "--pr", "7", "--request-changes", "Fix X", "--dry-run"])
+
+    assert result == 0
+    assert len(calls) == 0
+    captured = capsys.readouterr()
+    assert "Would request changes" in captured.out
+    assert "7" in captured.out
+
+
 def test_resolve_subcommand(monkeypatch, capsys):
     """Resolve subcommand calls run_resolve."""
     calls = []

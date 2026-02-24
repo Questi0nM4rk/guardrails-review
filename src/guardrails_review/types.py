@@ -1,8 +1,10 @@
-"""Shared dataclasses for guardrails-review."""
+"""Shared dataclasses and constants for guardrails-review."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+REVIEW_MARKER = "<!-- guardrails-review -->"
 
 
 @dataclass(frozen=True)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from guardrails_review.context import build_agent_context
-from guardrails_review.types import ReviewThread
+from guardrails_review.types import ReviewComment, ReviewResult, ReviewThread
 
 
 def _make_thread(**kwargs):
@@ -43,9 +43,14 @@ def test_build_agent_context_basic(monkeypatch):
         "guardrails_review.context.get_repo_info",
         lambda: ("owner", "repo"),
     )
+    reviews = [
+        ReviewResult(verdict="request_changes", summary="s", model="m", timestamp="t", pr=42),
+        ReviewResult(verdict="request_changes", summary="s", model="m", timestamp="t", pr=42),
+        ReviewResult(verdict="approve", summary="s", model="m", timestamp="t", pr=42),
+    ]
     monkeypatch.setattr(
         "guardrails_review.context.load_all_reviews",
-        lambda pr: [1, 2, 3],
+        lambda pr: reviews,
     )
 
     result = build_agent_context(42)
@@ -58,6 +63,8 @@ def test_build_agent_context_basic(monkeypatch):
     assert result["unresolved"][0]["thread_id"] == "t1"
     assert len(result["resolved"]) == 1
     assert result["resolved"][0]["path"] == "b.py"
+    assert result["latest_verdict"] == "approve"
+    assert result["files_changed"] == ["a.py"]
 
 
 def test_build_agent_context_empty(monkeypatch):
@@ -82,6 +89,8 @@ def test_build_agent_context_empty(monkeypatch):
     assert result["total_unresolved"] == 0
     assert result["unresolved"] == []
     assert result["resolved"] == []
+    assert result["latest_verdict"] is None
+    assert result["files_changed"] == []
 
 
 def test_build_agent_context_max_comments(monkeypatch):
@@ -162,3 +171,82 @@ def test_build_agent_context_shown_equals_total_when_under_cap(monkeypatch):
 
     assert result["total_unresolved"] == 3
     assert result["shown"] == 3
+
+
+def test_build_agent_context_latest_verdict_from_cache(monkeypatch):
+    """latest_verdict comes from the last cached review."""
+    threads = [
+        _make_thread(thread_id="t1", path="a.py", line=10, is_resolved=False),
+    ]
+    review = ReviewResult(
+        verdict="request_changes",
+        summary="Needs work",
+        comments=[ReviewComment(path="a.py", line=10, body="bug", severity="error")],
+        model="m",
+        timestamp="t",
+        pr=42,
+    )
+
+    monkeypatch.setattr(
+        "guardrails_review.context.get_review_threads",
+        lambda pr, owner, repo: threads,
+    )
+    monkeypatch.setattr(
+        "guardrails_review.context.get_repo_info",
+        lambda: ("owner", "repo"),
+    )
+    monkeypatch.setattr(
+        "guardrails_review.context.load_all_reviews",
+        lambda pr: [review],
+    )
+
+    result = build_agent_context(42)
+
+    assert result["latest_verdict"] == "request_changes"
+
+
+def test_build_agent_context_latest_verdict_none_when_no_reviews(monkeypatch):
+    """latest_verdict is None when no cached reviews exist."""
+    monkeypatch.setattr(
+        "guardrails_review.context.get_review_threads",
+        lambda pr, owner, repo: [],
+    )
+    monkeypatch.setattr(
+        "guardrails_review.context.get_repo_info",
+        lambda: ("owner", "repo"),
+    )
+    monkeypatch.setattr(
+        "guardrails_review.context.load_all_reviews",
+        lambda pr: [],
+    )
+
+    result = build_agent_context(1)
+
+    assert result["latest_verdict"] is None
+
+
+def test_build_agent_context_files_changed_from_unresolved(monkeypatch):
+    """files_changed lists deduplicated file paths from unresolved threads."""
+    threads = [
+        _make_thread(thread_id="t1", path="a.py", line=10, is_resolved=False),
+        _make_thread(thread_id="t2", path="a.py", line=20, is_resolved=False),
+        _make_thread(thread_id="t3", path="b.py", line=5, is_resolved=False),
+        _make_thread(thread_id="t4", path="c.py", line=1, is_resolved=True),
+    ]
+
+    monkeypatch.setattr(
+        "guardrails_review.context.get_review_threads",
+        lambda pr, owner, repo: threads,
+    )
+    monkeypatch.setattr(
+        "guardrails_review.context.get_repo_info",
+        lambda: ("owner", "repo"),
+    )
+    monkeypatch.setattr(
+        "guardrails_review.context.load_all_reviews",
+        lambda pr: [],
+    )
+
+    result = build_agent_context(1)
+
+    assert sorted(result["files_changed"]) == ["a.py", "b.py"]

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from guardrails_review.types import ReviewResult
@@ -149,7 +149,7 @@ def post_review(
     return True
 
 
-def graphql(query: str, variables: dict | None = None) -> dict:
+def graphql(query: str, variables: dict[str, str | int] | None = None) -> dict[str, Any]:
     """Execute a GraphQL query via ``gh api graphql``.
 
     Args:
@@ -207,11 +207,7 @@ def get_deleted_files(pr: int) -> set[str]:
     """
     proc = run_gh("pr", "view", str(pr), "--json", "files")
     data = json.loads(proc.stdout)
-    return {
-        f["path"]
-        for f in data.get("files", [])
-        if f.get("status") == "removed"
-    }
+    return {f["path"] for f in data.get("files", []) if f.get("status") == "removed"}
 
 
 def set_commit_status(
