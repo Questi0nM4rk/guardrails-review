@@ -106,14 +106,14 @@ guardrails-review review --pr <number> [--dry-run]
 3. Send diff to LLM (agentic or oneshot mode based on config)
 4. Validate comment line numbers against diff hunks
 5. Deduplicate comments against existing unresolved threads
-6. Post review (APPROVE or REQUEST_CHANGES)
-7. Auto-resolve stale threads from previous rounds
-8. Set commit status (`success` or `failure`)
+6. Auto-resolve stale threads from previous rounds
+7. Check remaining unresolved guardrails-review threads
+8. Post review (APPROVE or REQUEST_CHANGES)
+9. Set commit status (`success` or `failure`)
 
 **Verdict logic:** Any comments (valid or invalid-line) = `request_changes`.
 Zero comments AND zero unresolved threads from prior rounds = `approve`.
-Zero new comments BUT unresolved threads remain = `request_changes` (see
-section 7 for the approval gate design; the thread check is not yet implemented).
+Zero new comments BUT unresolved threads remain = `request_changes`.
 
 **Exit code:** Always 0 on success (even if defects found). 1 on pipeline failure.
 
@@ -373,26 +373,20 @@ defects but threads remain).
 
 ### Current behavior
 
-`review --pr N` currently computes the verdict as:
+`review --pr N` computes the verdict as:
 
 - **Any comments** (valid-line or invalid-line) -> `request_changes`
-- **Zero comments** -> `approve`
+- **Zero comments AND zero unresolved threads** -> `approve`
+- **Zero new comments BUT unresolved threads remain** -> `request_changes`
 
-### Known gap: unresolved thread check
+The unresolved thread check runs after auto-resolve, so stale threads
+(deleted files, outdated code, modified lines) are cleaned up first. Only
+threads that genuinely remain open block approval.
 
-The current implementation does NOT check condition #2 before approving. This
-means the bot can approve a PR that still has open defect threads from previous
-rounds:
-
-1. Round 1: Bot finds 3 defects, posts REQUEST_CHANGES
-2. Agent fixes 2 defects, pushes
-3. Round 2: Bot finds 0 new defects, posts APPROVE
-4. But 1 thread from Round 1 is still unresolved
-
-**Required fix:** Before approving, `run_review()` must fetch all
-guardrails-review threads, check if any are unresolved. If unresolved threads
-exist, post REQUEST_CHANGES with a message like "N unresolved thread(s) from
-previous review rounds" instead of approving. See section 10 (Planned Features).
+When approval is blocked by unresolved threads, the summary includes a
+message like "N unresolved thread(s) from previous review rounds remain
+open" and the commit status is set to `failure` with description
+"Unresolved threads remain".
 
 ---
 
@@ -481,15 +475,16 @@ append-only -- all review rounds are preserved for history.
 
 ### Unresolved thread check before approve
 
-**Status:** Not implemented. Critical gap. See section 7.
+**Status:** Implemented.
 
-Before approving, `run_review()` must:
+Before approving, `run_review()`:
 
-1. Fetch all review threads on the PR
-2. Filter to guardrails-review threads (by `<!-- guardrails-review -->` marker)
-3. Check if any are unresolved
-4. If unresolved threads exist, post REQUEST_CHANGES with message
-   "N unresolved thread(s) from previous review rounds" — do NOT approve
+1. Fetches all review threads on the PR (reuses dedup fetch)
+2. Filters to guardrails-review threads (by `<!-- guardrails-review -->` marker)
+3. Auto-resolves stale threads (deleted files, outdated, line no longer in diff)
+4. Checks remaining unresolved threads
+5. If unresolved threads exist, posts REQUEST_CHANGES with message
+   "N unresolved thread(s) from previous review rounds remain open"
 
 This is a gate, not a convenience. The bot is the maintainer. It does not
 approve code with open defect threads.
