@@ -1,0 +1,17 @@
+# Guardrails Review — LLM-powered PR reviewer
+# SETUP: Set model below, add OPENROUTER_KEY to GitHub secrets.
+
+[config]
+model = ""  # REQUIRED — e.g. "minimax/minimax-m2.5", "anthropic/claude-sonnet-4"
+
+[review]
+auto_approve = true
+severity_threshold = "error"  # "error" = only errors block, "warning" = warnings block too
+# max_diff_chars = 120000
+
+extra_instructions = """
+Focus areas:
+- Security: secrets, injection, unsafe operations
+- Logic bugs and missing error handling
+- Type safety and null checks
+"""

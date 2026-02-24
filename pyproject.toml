@@ -40,6 +40,14 @@ ignore = [
   "T201",                  # print (CLI tool)
   "D203", "D213",         # docstring conflicts
 ]
+per-file-ignores."tests/**" = [
+  "S101",    # assert is fine in tests
+  "PLR2004", # magic values are fine in tests
+  "D",       # no docstring enforcement in tests
+  "ANN",     # no type annotations in tests
+  "ARG",     # unused lambda args in mocks
+  "SLF001",  # private member access in tests
+]
 
 [tool.pyright]
 include = ["src/guardrails_review"]

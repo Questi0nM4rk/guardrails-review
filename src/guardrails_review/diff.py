@@ -48,7 +48,10 @@ def parse_diff_hunks(diff: str) -> dict[str, set[int]]:
 
     for line in diff.splitlines():
         current_file, right_line = _process_line(
-            line, current_file, right_line, result,
+            line,
+            current_file,
+            right_line,
+            result,
         )
 
     # Remove entries with empty line sets (e.g. deleted files)
