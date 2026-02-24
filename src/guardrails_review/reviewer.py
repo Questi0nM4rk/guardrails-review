@@ -308,17 +308,39 @@ def _try_auto_resolve(
     our_existing: list[ReviewThread],
     valid_lines: dict[str, set[int]],
     commit_sha: str,
-) -> None:
-    """Auto-resolve stale threads, logging failures."""
+) -> set[str]:
+    """Auto-resolve stale threads, logging failures.
+
+    Returns set of thread IDs that were successfully resolved.
+    """
+    resolved_ids: set[str] = set()
     try:
         deleted = get_deleted_files(pr)
         unresolved = [t for t in our_existing if not t.is_resolved]
         resolutions = find_resolvable_threads(unresolved, valid_lines, deleted, commit_sha)
         for r in resolutions:
             if resolve_thread(r.thread_id):
+                resolved_ids.add(r.thread_id)
                 logger.info("Auto-resolved %s: %s", r.thread_id, r.reason)
     except RuntimeError:
         logger.warning("Failed to auto-resolve threads (non-fatal)")
+    return resolved_ids
+
+
+def _check_unresolved_threads(
+    our_threads: list[ReviewThread],
+    auto_resolved_ids: set[str],
+) -> list[ReviewThread]:
+    """Return guardrails-review threads still unresolved after auto-resolve.
+
+    Args:
+        our_threads: All threads with the guardrails-review marker.
+        auto_resolved_ids: Thread IDs that were just auto-resolved.
+
+    Returns:
+        List of threads that are still unresolved.
+    """
+    return [t for t in our_threads if not t.is_resolved and t.thread_id not in auto_resolved_ids]
 
 
 def run_review(
@@ -364,30 +386,53 @@ def run_review(
         pr=pr,
     )
 
-    if dry_run:
-        _print_dry_run(final)
-        return 0
-
     owner, repo = get_repo_info()
     commit_sha = pr_meta["headRefOid"]
 
-    _try_set_status(owner, repo, commit_sha, "pending", "Review in progress")
+    if not dry_run:
+        _try_set_status(owner, repo, commit_sha, "pending", "Review in progress")
 
     # Deduplicate comments against existing threads
     final, our_existing = _try_dedup(pr, final, invalid_comments, owner, repo)
 
+    # Auto-resolve stale threads before posting
+    auto_resolved_ids = _try_auto_resolve(pr, our_existing, valid_lines, commit_sha)
+
+    # Check remaining unresolved guardrails-review threads
+    still_unresolved = _check_unresolved_threads(our_existing, auto_resolved_ids)
+    if final.verdict == "approve" and still_unresolved:
+        n_unresolved = len(still_unresolved)
+        msg = (
+            f"\n\n---\n**{n_unresolved} unresolved thread(s) "
+            f"from previous review rounds remain open.**"
+        )
+        final = ReviewResult(
+            verdict="request_changes",
+            summary=final.summary + msg,
+            comments=final.comments,
+            model=final.model,
+            timestamp=final.timestamp,
+            pr=pr,
+        )
+        logger.info(
+            "Approval blocked: %d unresolved thread(s) from previous rounds",
+            n_unresolved,
+        )
+
+    if dry_run:
+        _print_dry_run(final)
+        return 0
+
     post_review(pr, final, owner, repo, commit_sha)
     save_review(final, project_dir)
-
-    # Auto-resolve stale threads after posting
-    _try_auto_resolve(pr, our_existing, valid_lines, commit_sha)
 
     # Set final commit status
     n = len(final.comments) + len(invalid_comments)
     if final.verdict == "approve":
         _try_set_status(owner, repo, commit_sha, "success", "Approved")
     else:
-        _try_set_status(owner, repo, commit_sha, "failure", f"{n} defect(s) found")
+        desc = f"{n} defect(s) found" if n > 0 else "Unresolved threads remain"
+        _try_set_status(owner, repo, commit_sha, "failure", desc)
 
     print(f"Review posted for PR #{pr}: {final.verdict}")
     return 0

@@ -249,6 +249,10 @@ def test_run_review_dry_run(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
     )
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
 
     result = run_review(53, dry_run=True, project_dir=tmp_path)
 
@@ -403,6 +407,10 @@ def test_run_review_dry_run_skips_status(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
     )
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
     monkeypatch.setattr(
         "guardrails_review.reviewer.set_commit_status",
         lambda *a, **kw: statuses.append(a),
@@ -440,6 +448,10 @@ def test_run_review_invalid_lines_in_summary(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
     )
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
 
     result = run_review(53, dry_run=True, project_dir=tmp_path)
 
@@ -478,6 +490,10 @@ def test_oneshot_still_works(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
     )
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
 
     result = run_review(1, dry_run=True, project_dir=tmp_path)
 
@@ -938,8 +954,9 @@ def test_run_review_dedup_removes_duplicate_comments(tmp_path, monkeypatch, caps
     assert len(posted) == 1
     # The duplicate comment should have been removed, so no inline comments posted
     assert len(posted[0].comments) == 0
-    # With 0 comments, verdict should be approve
-    assert posted[0].verdict == "approve"
+    # Despite 0 new comments, the existing unresolved thread blocks approval
+    assert posted[0].verdict == "request_changes"
+    assert "unresolved" in posted[0].summary.lower()
 
 
 # --- Auto-resolve path in run_review ---
@@ -1003,7 +1020,7 @@ def _make_marked_thread(
     *,
     is_resolved: bool = False,
     path: str = "src/main.py",
-    line: int = 10,
+    line: int = 2,
     is_outdated: bool = False,
 ) -> ReviewThread:
     """Build a ReviewThread with the guardrails-review marker."""
@@ -1011,7 +1028,7 @@ def _make_marked_thread(
         thread_id=thread_id,
         path=path,
         line=line,
-        body=f"<!-- guardrails-review -->\nSome defect found here",
+        body="<!-- guardrails-review -->\nSome defect found here",
         is_resolved=is_resolved,
         is_outdated=is_outdated,
         author="github-actions[bot]",
@@ -1051,9 +1068,7 @@ def _stub_clean_review(tmp_path, monkeypatch, *, existing_threads=None):
     monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(
-        f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: threads
-    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: threads)
     monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
     monkeypatch.setattr(
         f"{_REVIEWER}.post_review",
