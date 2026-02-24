@@ -176,7 +176,7 @@ def test_post_review_with_comments(monkeypatch: pytest.MonkeyPatch) -> None:
             path="src/bar.py",
             line=20,
             body="Multi-line issue",
-            severity="error",
+            severity="warning",
             start_line=15,
         ),
     ]

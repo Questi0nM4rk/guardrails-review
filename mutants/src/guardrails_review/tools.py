@@ -115,10 +115,14 @@ TOOL_DEFINITIONS: list[dict] = [
                             "properties": {
                                 "path": {"type": "string"},
                                 "line": {"type": "integer"},
+                                "severity": {
+                                    "type": "string",
+                                    "enum": ["error", "warning", "info"],
+                                },
                                 "body": {"type": "string"},
                                 "start_line": {"type": "integer"},
                             },
-                            "required": ["path", "line", "body"],
+                            "required": ["path", "line", "severity", "body"],
                         },
                         "description": "Inline review comments.",
                     },

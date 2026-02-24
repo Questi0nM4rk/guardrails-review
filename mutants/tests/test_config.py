@@ -21,6 +21,8 @@ def test_load_config_valid_full(tmp_path: Path) -> None:
 model = "anthropic/claude-sonnet-4"
 
 [review]
+auto_approve = false
+severity_threshold = "warning"
 max_diff_chars = 50000
 extra_instructions = "Focus on security."
 agentic = false
@@ -31,6 +33,8 @@ max_iterations = 3
     result = load_config(tmp_path)
 
     assert result.model == "anthropic/claude-sonnet-4"
+    assert result.auto_approve is False
+    assert result.severity_threshold == "warning"
     assert result.max_diff_chars == 50000
     assert result.extra_instructions == "Focus on security."
     assert result.agentic is False
@@ -51,6 +55,8 @@ model = "openai/gpt-4o"
 
     assert result.model == "openai/gpt-4o"
     assert result.extra_instructions == ""
+    assert result.auto_approve is True
+    assert result.severity_threshold == "error"
     assert result.max_diff_chars == 120_000
     assert result.agentic is True
     assert result.max_iterations == 5
@@ -112,27 +118,6 @@ def test_load_config_agentic_defaults(tmp_path: Path) -> None:
 
     assert result.agentic is True
     assert result.max_iterations == 5
-
-
-def test_load_config_ignores_removed_fields(tmp_path: Path) -> None:
-    """Old configs with auto_approve/severity_threshold are silently ignored."""
-    config_file = tmp_path / ".guardrails-review.toml"
-    config_file.write_text(
-        """\
-[config]
-model = "test/m"
-
-[review]
-auto_approve = false
-severity_threshold = "warning"
-"""
-    )
-
-    result = load_config(tmp_path)
-
-    assert result.model == "test/m"
-    assert not hasattr(result, "auto_approve")
-    assert not hasattr(result, "severity_threshold")
 
 
 def test_load_config_agentic_disabled(tmp_path: Path) -> None:

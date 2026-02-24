@@ -26,21 +26,9 @@ def test_build_messages_basic():
 
     assert len(messages) == 2
     assert messages[0]["role"] == "system"
+    assert "code reviewer" in messages[0]["content"]
     assert "Fix bug" in messages[1]["content"]
     assert "diff content" in messages[1]["content"]
-
-
-def test_system_prompt_defect_only():
-    """System prompt focuses on defects only, not style/naming."""
-    config = ReviewConfig(model="test/model")
-    messages = build_messages("diff", config, {"title": "T", "body": ""})
-    prompt = messages[0]["content"]
-
-    assert "bug" in prompt.lower() or "defect" in prompt.lower()
-    assert "severity" not in prompt.lower() or "error" in prompt.lower()
-    # Should NOT ask LLM to report style/naming
-    assert '"warning"' not in prompt
-    assert '"info"' not in prompt
 
 
 def test_build_messages_with_extra_instructions():
@@ -78,7 +66,7 @@ def test_parse_response_valid_json():
             "verdict": "approve",
             "summary": "LGTM",
             "comments": [
-                {"path": "foo.py", "line": 10, "body": "Nice"},
+                {"path": "foo.py", "line": 10, "severity": "info", "body": "Nice"},
             ],
         }
     )
@@ -88,8 +76,6 @@ def test_parse_response_valid_json():
     assert "LGTM" in result.summary
     assert len(result.comments) == 1
     assert result.comments[0].path == "foo.py"
-    assert result.comments[0].severity == "error"
-    assert result.comments[0].body.startswith("<!-- guardrails-review -->")
     assert result.pr == 42
     assert result.model == "test/model"
 
@@ -135,16 +121,16 @@ def test_parse_response_skips_incomplete_comments():
             "verdict": "approve",
             "summary": "OK",
             "comments": [
-                {"path": "", "line": 10, "body": "no path"},
-                {"path": "f.py", "line": 0, "body": "no line"},
-                {"path": "f.py", "line": 5, "body": "valid"},
+                {"path": "", "line": 10, "severity": "info", "body": "no path"},
+                {"path": "f.py", "line": 0, "severity": "info", "body": "no line"},
+                {"path": "f.py", "line": 5, "severity": "info", "body": "valid"},
             ],
         }
     )
     result = parse_response(raw, "m", 1)
 
     assert len(result.comments) == 1
-    assert "valid" in result.comments[0].body
+    assert result.comments[0].body == "valid"
 
 
 def test_parse_submit_review_args():
@@ -153,7 +139,7 @@ def test_parse_submit_review_args():
         {
             "verdict": "approve",
             "summary": "<!-- guardrails-review -->\nLooks good",
-            "comments": [{"path": "f.py", "line": 5, "body": "nice"}],
+            "comments": [{"path": "f.py", "line": 5, "severity": "info", "body": "nice"}],
         }
     )
 
@@ -162,8 +148,6 @@ def test_parse_submit_review_args():
     assert result.verdict == "approve"
     assert "Looks good" in result.summary
     assert len(result.comments) == 1
-    assert result.comments[0].severity == "error"
-    assert result.comments[0].body.startswith("<!-- guardrails-review -->")
     assert result.pr == 42
 
 
@@ -171,9 +155,9 @@ def test_validate_comments_splits_correctly():
     """Comments are split into valid and invalid based on diff lines."""
     valid_lines = {"foo.py": {10, 11, 12}, "bar.py": {5}}
     comments = [
-        ReviewComment(path="foo.py", line=10, body="ok", severity="error"),
+        ReviewComment(path="foo.py", line=10, body="ok", severity="info"),
         ReviewComment(path="foo.py", line=99, body="bad line", severity="error"),
-        ReviewComment(path="baz.py", line=1, body="wrong file", severity="error"),
+        ReviewComment(path="baz.py", line=1, body="wrong file", severity="warning"),
     ]
     valid, invalid = validate_comments(comments, valid_lines)
 
@@ -182,16 +166,42 @@ def test_validate_comments_splits_correctly():
     assert len(invalid) == 2
 
 
-def test_compute_verdict_comments_request_changes():
-    """Any comments trigger request_changes."""
+def test_compute_verdict_error_blocks():
+    """Error-severity comment triggers request_changes."""
+    config = ReviewConfig(model="m", severity_threshold="error")
     comments = [ReviewComment(path="f.py", line=1, body="x", severity="error")]
 
-    assert _compute_verdict(comments) == "request_changes"
+    assert _compute_verdict(comments, config) == "request_changes"
 
 
-def test_compute_verdict_no_comments_approves():
-    """No comments gives approve."""
-    assert _compute_verdict([]) == "approve"
+def test_compute_verdict_warning_passes_default():
+    """Warning-only comments approve when threshold is error."""
+    config = ReviewConfig(model="m", severity_threshold="error", auto_approve=True)
+    comments = [ReviewComment(path="f.py", line=1, body="x", severity="warning")]
+
+    assert _compute_verdict(comments, config) == "approve"
+
+
+def test_compute_verdict_warning_blocks_when_threshold():
+    """Warning-severity comment blocks when threshold is warning."""
+    config = ReviewConfig(model="m", severity_threshold="warning")
+    comments = [ReviewComment(path="f.py", line=1, body="x", severity="warning")]
+
+    assert _compute_verdict(comments, config) == "request_changes"
+
+
+def test_compute_verdict_no_comments_auto_approve():
+    """No comments with auto_approve=True gives approve."""
+    config = ReviewConfig(model="m", auto_approve=True)
+
+    assert _compute_verdict([], config) == "approve"
+
+
+def test_compute_verdict_no_comments_no_auto_approve():
+    """No comments with auto_approve=False gives request_changes."""
+    config = ReviewConfig(model="m", auto_approve=False)
+
+    assert _compute_verdict([], config) == "request_changes"
 
 
 def _make_gh_mock(responses: dict[str, tuple[int, str]]):
@@ -214,7 +224,7 @@ def test_run_review_dry_run(tmp_path, monkeypatch, capsys):
     """Dry run prints result without posting to GitHub."""
     config_file = tmp_path / ".guardrails-review.toml"
     config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
+        '[config]\nmodel = "test/m"\n[review]\nauto_approve = true\nagentic = false\n'
     )
     monkeypatch.chdir(tmp_path)
 
@@ -255,7 +265,7 @@ def test_run_review_posts_and_caches(tmp_path, monkeypatch):
     """Full review posts to GitHub and saves to cache."""
     config_file = tmp_path / ".guardrails-review.toml"
     config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
+        '[config]\nmodel = "test/m"\n[review]\nauto_approve = true\nagentic = false\n'
     )
 
     diff_text = (
@@ -301,7 +311,7 @@ def test_run_review_invalid_lines_in_summary(tmp_path, monkeypatch, capsys):
     """Comments on invalid lines are moved to the review summary."""
     config_file = tmp_path / ".guardrails-review.toml"
     config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
+        '[config]\nmodel = "test/m"\n[review]\nauto_approve = true\nagentic = false\n'
     )
 
     diff_text = (
@@ -338,7 +348,7 @@ def test_oneshot_still_works(tmp_path, monkeypatch, capsys):
     """Explicit agentic=false still uses oneshot path and produces correct results."""
     config_file = tmp_path / ".guardrails-review.toml"
     config_file.write_text(
-        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
+        '[config]\nmodel = "test/m"\n[review]\nauto_approve = true\nagentic = false\n'
     )
 
     diff_text = (
@@ -524,7 +534,7 @@ def test_parse_response_comment_defaults():
             "verdict": "approve",
             "summary": "<!-- guardrails-review -->\nOK",
             "comments": [
-                {"path": "f.py", "line": 5},  # missing body, start_line
+                {"path": "f.py", "line": 5},  # missing body, severity, start_line
             ],
         }
     )
@@ -532,8 +542,8 @@ def test_parse_response_comment_defaults():
 
     assert len(result.comments) == 1
     c = result.comments[0]
-    assert c.body.startswith("<!-- guardrails-review -->")
-    assert c.severity == "error"
+    assert c.body == ""
+    assert c.severity == "info"
     assert c.start_line is None
 
 
@@ -569,6 +579,7 @@ def test_parse_response_with_start_line():
                 {
                     "path": "f.py",
                     "line": 10,
+                    "severity": "warning",
                     "body": "multi-line issue",
                     "start_line": 7,
                 },
@@ -580,7 +591,6 @@ def test_parse_response_with_start_line():
     assert len(result.comments) == 1
     assert result.comments[0].start_line == 7
     assert result.comments[0].line == 10
-    assert result.comments[0].severity == "error"
 
 
 def test_build_result_verdict_default_when_missing():
@@ -597,10 +607,11 @@ def test_build_result_summary_default_when_missing():
     assert "No summary provided" in result.summary or result.summary != ""
 
 
-def test_compute_verdict_any_comment_blocks():
-    """Even info-severity comments trigger request_changes (strict mode)."""
-    comments = [ReviewComment(path="f.py", line=1, body="x", severity="error")]
-    assert _compute_verdict(comments) == "request_changes"
+def test_compute_verdict_info_only_approves():
+    """Info-only comments approve regardless of threshold."""
+    config = ReviewConfig(model="m", severity_threshold="error", auto_approve=True)
+    comments = [ReviewComment(path="f.py", line=1, body="x", severity="info")]
+    assert _compute_verdict(comments, config) == "approve"
 
 
 def test_agentic_content_response_fallback(monkeypatch):

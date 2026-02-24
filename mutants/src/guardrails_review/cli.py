@@ -27,6 +27,11 @@ def _build_parser() -> argparse.ArgumentParser:
     # comments
     comments_p = sub.add_parser("comments", help="Query review findings")
     comments_p.add_argument("--pr", type=int, required=True, help="PR number")
+    comments_p.add_argument(
+        "--severity",
+        choices=["error", "warning", "info"],
+        help="Filter by severity",
+    )
     comments_p.add_argument("--json", dest="as_json", action="store_true", help="Output as JSON")
 
     # approve
@@ -66,11 +71,15 @@ def _cmd_comments(args: argparse.Namespace) -> int:
     print(f"PR #{review.pr} — {review.verdict} (model: {review.model})")
     print(f"  {review.summary.splitlines()[0]}")
 
-    if not review.comments:
-        print("  No comments")
+    comments = review.comments
+    if args.severity:
+        comments = [c for c in comments if c.severity == args.severity]
+
+    if not comments:
+        print("  No comments" + (f" at severity={args.severity}" if args.severity else ""))
     else:
-        for c in review.comments:
-            print(f"  {c.path}:{c.line} — {c.body}")
+        for c in comments:
+            print(f"  [{c.severity}] {c.path}:{c.line} — {c.body}")
 
     return 0
 

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
-You are a code reviewer. Review the PR diff and return ONLY valid JSON:
+You are a pedantic defect detector. Review the PR diff and return ONLY valid JSON:
 
 {
   "verdict": "approve" | "request_changes",
@@ -31,24 +31,34 @@ You are a code reviewer. Review the PR diff and return ONLY valid JSON:
     {
       "path": "relative/file/path",
       "line": <line number in new file>,
-      "severity": "error" | "warning" | "info",
-      "body": "review comment"
+      "body": "description of the defect"
     }
   ]
 }
 
+**ONLY report these defect categories:**
+- Bugs and logic errors
+- Security vulnerabilities
+- Data races and concurrency issues
+- Resource leaks (file handles, connections, memory)
+- Unhandled error paths (missing error checks, swallowed exceptions)
+- API contract violations (wrong types, missing required fields, broken invariants)
+
+**Do NOT report:**
+- Style, formatting, or naming
+- "Consider doing X" suggestions
+- Missing tests or documentation
+- Performance unless it's a clear algorithmic bug (e.g. O(n^2) in a hot path)
+
 Rules:
 - Line numbers reference the new file (right side of diff, + or space-prefixed lines)
 - Only comment on lines within diff hunks
-- "error" = must fix before merge, "warning" = should fix, "info" = suggestion
 - Empty comments + "approve" = no issues found
-- Do NOT flag style/formatting (handled by linters and pre-commit hooks)
-- Do NOT flag missing tests unless a critical code path has zero coverage
 - Include a <!-- guardrails-review --> HTML comment at the start of the summary\
 """
 
 _AGENTIC_SYSTEM_PROMPT = """\
-You are a thorough code reviewer with tools to explore the codebase before submitting.
+You are a pedantic defect detector with tools to explore the codebase before submitting.
 
 **Workflow:**
 1. First, examine the diff to understand what changed
@@ -58,12 +68,23 @@ You are a thorough code reviewer with tools to explore the codebase before submi
    - search_code() to find related code, callers, or tests
 3. When you have enough context, call submit_review() with your findings
 
-**Review rules:**
+**ONLY report these defect categories:**
+- Bugs and logic errors
+- Security vulnerabilities
+- Data races and concurrency issues
+- Resource leaks (file handles, connections, memory)
+- Unhandled error paths (missing error checks, swallowed exceptions)
+- API contract violations (wrong types, missing required fields, broken invariants)
+
+**Do NOT report:**
+- Style, formatting, or naming
+- "Consider doing X" suggestions
+- Missing tests or documentation
+- Performance unless it's a clear algorithmic bug
+
+Rules:
 - Line numbers reference the new file (right side of diff)
 - Only comment on lines within diff hunks
-- "error" = must fix, "warning" = should fix, "info" = suggestion
-- Do NOT flag style/formatting (handled by linters)
-- Do NOT flag missing tests unless a critical path has zero coverage
 - Include <!-- guardrails-review --> at the start of your summary\
 """
 
@@ -154,12 +175,17 @@ def parse_submit_review_args(arguments: str, model: str, pr: int) -> ReviewResul
 
 def _build_result_from_parsed(parsed: dict, model: str, pr: int, timestamp: str) -> ReviewResult:
     """Build a ReviewResult from a parsed JSON dict."""
+    _marker = "<!-- guardrails-review -->"
     comments = [
         ReviewComment(
             path=c.get("path", ""),
             line=c.get("line", 0),
-            body=c.get("body", ""),
-            severity=c.get("severity", "info"),
+            body=(
+                f"{_marker}\n{c.get('body', '')}"
+                if _marker not in c.get("body", "")
+                else c.get("body", "")
+            ),
+            severity="error",
             start_line=c.get("start_line"),
         )
         for c in parsed.get("comments", [])
@@ -250,10 +276,10 @@ def run_review(
     if invalid_comments:
         summary += "\n\n---\n**Comments on lines outside diff (could not post inline):**\n"
         for c in invalid_comments:
-            summary += f"\n- `{c.path}:{c.line}` ({c.severity}): {c.body}"
+            summary += f"\n- `{c.path}:{c.line}`: {c.body}"
 
-    # Determine final verdict based on severity threshold
-    verdict = _compute_verdict(valid_comments + invalid_comments, config)
+    # Determine final verdict: any comments = request_changes, none = approve
+    verdict = _compute_verdict(valid_comments + invalid_comments)
 
     final = ReviewResult(
         verdict=verdict,
@@ -369,19 +395,11 @@ def _run_agentic_review(
     return parse_response("", config.model, pr)
 
 
-def _compute_verdict(comments: list[ReviewComment], config: ReviewConfig) -> str:
-    """Determine verdict based on comment severities and config threshold."""
-    blocking = {"error"}
-    if config.severity_threshold == "warning":
-        blocking.add("warning")
-
-    has_blocking = any(c.severity in blocking for c in comments)
-
-    if has_blocking:
+def _compute_verdict(comments: list[ReviewComment]) -> str:
+    """Determine verdict: any comments = request_changes, none = approve."""
+    if comments:
         return "request_changes"
-    if config.auto_approve:
-        return "approve"
-    return "request_changes"
+    return "approve"
 
 
 def _print_dry_run(result: ReviewResult) -> None:
@@ -393,4 +411,4 @@ def _print_dry_run(result: ReviewResult) -> None:
     if result.comments:
         print(f"\n--- {len(result.comments)} inline comment(s) ---")
         for c in result.comments:
-            print(f"  [{c.severity}] {c.path}:{c.line} — {c.body}")
+            print(f"  {c.path}:{c.line} — {c.body}")

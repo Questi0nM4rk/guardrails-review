@@ -11,6 +11,8 @@ class ReviewConfig:
 
     model: str
     extra_instructions: str = ""
+    auto_approve: bool = True
+    severity_threshold: str = "error"
     max_diff_chars: int = 120_000
     agentic: bool = True
     max_iterations: int = 5

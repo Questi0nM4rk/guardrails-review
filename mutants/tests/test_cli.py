@@ -49,7 +49,7 @@ def test_comments_subcommand_json(monkeypatch, capsys):
     review = ReviewResult(
         verdict="approve",
         summary="LGTM",
-        comments=[ReviewComment(path="f.py", line=1, body="ok", severity="error")],
+        comments=[ReviewComment(path="f.py", line=1, body="ok", severity="info")],
         model="m",
         timestamp="t",
         pr=5,
@@ -70,7 +70,7 @@ def test_comments_subcommand_text(monkeypatch, capsys):
     review = ReviewResult(
         verdict="approve",
         summary="LGTM",
-        comments=[ReviewComment(path="f.py", line=1, body="nice", severity="error")],
+        comments=[ReviewComment(path="f.py", line=1, body="nice", severity="info")],
         model="m",
         timestamp="t",
         pr=5,
@@ -83,6 +83,28 @@ def test_comments_subcommand_text(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "approve" in captured.out
     assert "f.py:1" in captured.out
+
+
+def test_comments_severity_filter(monkeypatch, capsys):
+    """Comments --severity filters by severity level."""
+    review = ReviewResult(
+        verdict="request_changes",
+        summary="Issues",
+        comments=[
+            ReviewComment(path="f.py", line=1, body="bad", severity="error"),
+            ReviewComment(path="f.py", line=2, body="meh", severity="info"),
+        ],
+        model="m",
+        timestamp="t",
+        pr=5,
+    )
+    monkeypatch.setattr("guardrails_review.cli.load_latest_review", lambda pr: review)
+
+    main(["comments", "--pr", "5", "--severity", "error"])
+
+    captured = capsys.readouterr()
+    assert "bad" in captured.out
+    assert "meh" not in captured.out
 
 
 def test_comments_no_cache(monkeypatch, capsys):

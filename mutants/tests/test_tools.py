@@ -203,14 +203,3 @@ def test_tool_definitions_have_required_structure():
         assert tool["type"] == "function"
         assert "description" in tool["function"]
         assert "parameters" in tool["function"]
-
-
-def test_submit_review_schema_has_no_severity():
-    """submit_review tool schema should not include severity field."""
-    submit_tool = next(t for t in TOOL_DEFINITIONS if t["function"]["name"] == "submit_review")
-    comment_props = submit_tool["function"]["parameters"]["properties"]["comments"]["items"][
-        "properties"
-    ]
-    assert "severity" not in comment_props
-    required = submit_tool["function"]["parameters"]["properties"]["comments"]["items"]["required"]
-    assert "severity" not in required
