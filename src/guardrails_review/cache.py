@@ -13,12 +13,12 @@ from pathlib import Path
 
 from guardrails_review.types import ReviewComment, ReviewResult
 
-_CACHE_DIR = Path(".guardrails-review") / "cache"
+_CACHE_SUBDIR = Path(".guardrails-review") / "cache"
 
 
 def _cache_dir(project_dir: Path | None) -> Path:
     base = project_dir if project_dir is not None else Path.cwd()
-    return base / _CACHE_DIR
+    return base / _CACHE_SUBDIR
 
 
 def save_review(result: ReviewResult, project_dir: Path | None = None) -> Path:

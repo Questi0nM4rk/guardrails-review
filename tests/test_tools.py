@@ -67,6 +67,41 @@ def test_read_file_slice(monkeypatch, ctx):
     assert "5: e" not in result
 
 
+def test_read_file_rejects_absolute_path(ctx):
+    """read_file rejects absolute paths as traversal attempt."""
+    result = execute_tool("read_file", json.dumps({"path": "/etc/passwd"}), ctx)
+
+    assert "Invalid path" in result
+
+
+def test_read_file_rejects_dot_dot_traversal(ctx):
+    """read_file rejects paths containing '..' components."""
+    result = execute_tool("read_file", json.dumps({"path": "src/../../etc/passwd"}), ctx)
+
+    assert "Invalid path" in result
+
+
+def test_read_file_end_line_only(monkeypatch, ctx):
+    """read_file with only end_line starts numbering from line 1."""
+    content = base64.b64encode(b"a\nb\nc\nd\ne\n").decode()
+
+    def fake_run_gh(*args, **kwargs):
+        return _gh_mock(content + "\n")
+
+    monkeypatch.setattr("guardrails_review.tools.run_gh", fake_run_gh)
+
+    result = execute_tool(
+        "read_file",
+        json.dumps({"path": "f.py", "end_line": 3}),
+        ctx,
+    )
+
+    assert "1: a" in result
+    assert "2: b" in result
+    assert "3: c" in result
+    assert "4: d" not in result
+
+
 def test_read_file_error(monkeypatch, ctx):
     """read_file returns error message on gh failure."""
 
@@ -147,6 +182,31 @@ def test_search_code_success(monkeypatch, ctx):
     result = execute_tool("search_code", json.dumps({"query": "def hello"}), ctx)
 
     assert "src/main.py" in result
+
+
+def test_search_code_strips_github_qualifiers(monkeypatch, ctx):
+    """search_code strips repo:/org:/user:/path:/language:/filename: qualifiers from query."""
+    captured_queries = []
+
+    def fake_run_gh(*args, **kwargs):
+        # Capture the -f q=... argument
+        captured_queries.extend(a[2:] for a in args if isinstance(a, str) and a.startswith("q="))
+        return _gh_mock("src/main.py:def hello():\n")
+
+    monkeypatch.setattr("guardrails_review.tools.run_gh", fake_run_gh)
+
+    execute_tool(
+        "search_code",
+        json.dumps({"query": "def hello repo:evil/inject org:hacked"}),
+        ctx,
+    )
+
+    assert len(captured_queries) == 1
+    # The injected repo:/org: should be stripped; only our repo: should remain
+    assert "repo:evil/inject" not in captured_queries[0]
+    assert "org:hacked" not in captured_queries[0]
+    assert "repo:acme/widgets" in captured_queries[0]
+    assert "def hello" in captured_queries[0]
 
 
 def test_search_code_no_results(monkeypatch, ctx):

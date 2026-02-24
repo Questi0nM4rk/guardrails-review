@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -164,6 +165,8 @@ def execute_tool(name: str, arguments: str, ctx: ToolContext) -> str:
 def _read_file(args: dict[str, Any], ctx: ToolContext) -> str:
     """Read a file from the repo at the PR head commit."""
     path = args["path"]
+    if path.startswith("/") or ".." in path.split("/"):
+        return f"Invalid path: {path}"
     try:
         proc = run_gh(
             "api",
@@ -192,7 +195,8 @@ def _read_file(args: dict[str, Any], ctx: ToolContext) -> str:
         end_idx = end or len(lines)
         lines = lines[start_idx:end_idx]
 
-    numbered = [f"{i + (start or 1)}: {line}" for i, line in enumerate(lines)]
+    base_line = start if start is not None else 1
+    numbered = [f"{i + base_line}: {line}" for i, line in enumerate(lines)]
     return "\n".join(numbered)
 
 
@@ -217,9 +221,14 @@ def _list_changed_files(_args: dict[str, Any], ctx: ToolContext) -> str:
     return "\n".join(lines)
 
 
+_GITHUB_QUALIFIER_RE = re.compile(r"\b(repo|org|user|path|language|filename):\S+", re.IGNORECASE)
+
+
 def _search_code(args: dict[str, Any], ctx: ToolContext) -> str:
     """Search for code in the repository."""
-    query = args["query"]
+    raw_query = args["query"]
+    # Strip GitHub search qualifiers the LLM may inject to prevent scope escape
+    query = _GITHUB_QUALIFIER_RE.sub("", raw_query).strip()
     search_query = f"{query} repo:{ctx.owner}/{ctx.repo}"
     try:
         proc = run_gh(

@@ -85,6 +85,25 @@ def test_comments_subcommand_text(monkeypatch, capsys):
     assert "f.py:1" in captured.out
 
 
+def test_comments_empty_summary(monkeypatch, capsys):
+    """Comments with empty summary does not crash (IndexError guard)."""
+    review = ReviewResult(
+        verdict="approve",
+        summary="",
+        comments=[],
+        model="m",
+        timestamp="t",
+        pr=5,
+    )
+    monkeypatch.setattr("guardrails_review.cli.load_latest_review", lambda pr: review)
+
+    result = main(["comments", "--pr", "5"])
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "approve" in captured.out
+
+
 def test_comments_no_cache(monkeypatch, capsys):
     """Comments with no cached reviews returns 1."""
     monkeypatch.setattr("guardrails_review.cli.load_latest_review", lambda pr: None)

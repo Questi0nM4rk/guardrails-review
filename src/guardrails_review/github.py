@@ -16,12 +16,17 @@ if TYPE_CHECKING:
     from guardrails_review.types import ReviewResult
 
 
-def run_gh(*args: str, timeout: int = 60) -> subprocess.CompletedProcess[str]:
+def run_gh(
+    *args: str,
+    timeout: int = 60,
+    input_data: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run a ``gh`` CLI command and return the result.
 
     Args:
         *args: Arguments to pass after ``gh``.
         timeout: Maximum seconds to wait for the process.
+        input_data: Optional string to pass to stdin (for ``--input -`` patterns).
 
     Returns:
         The completed process on success.
@@ -35,6 +40,7 @@ def run_gh(*args: str, timeout: int = 60) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
         timeout=timeout,
+        input=input_data,
     )
     if proc.returncode != 0:
         msg = f"gh {' '.join(args)} failed (exit {proc.returncode}): {proc.stderr}"
@@ -132,26 +138,15 @@ def post_review(
         "comments": comments,
     }
 
-    cmd_args = [
-        "gh",
+    run_gh(
         "api",
         f"repos/{owner}/{repo}/pulls/{pr}/reviews",
         "--method",
         "POST",
         "--input",
         "-",
-    ]
-    proc = subprocess.run(  # noqa: S603 — args are constructed from validated parameters
-        cmd_args,
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
+        input_data=json.dumps(payload),
     )
-    if proc.returncode != 0:
-        msg = f"post_review failed (exit {proc.returncode}): {proc.stderr}"
-        raise RuntimeError(msg)
 
     return True
 

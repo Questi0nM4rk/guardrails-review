@@ -147,6 +147,22 @@ def test_call_openrouter_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
+def test_call_openrouter_urlerror_non_timeout_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-timeout URLError is re-raised as-is (not wrapped in TimeoutError)."""
+    monkeypatch.setenv("OPENROUTER_KEY", "sk-test-key")
+
+    def fake_urlopen(*_args: Any, **_kwargs: Any) -> None:
+        raise urllib.error.URLError(reason=ConnectionRefusedError("connection refused"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(urllib.error.URLError, match="connection refused"):
+        call_openrouter(
+            messages=[{"role": "user", "content": "hi"}],
+            model="test-model",
+        )
+
+
 def test_call_openrouter_sends_correct_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verifies Authorization and Content-Type headers are set correctly."""
     monkeypatch.setenv("OPENROUTER_KEY", "sk-my-secret")

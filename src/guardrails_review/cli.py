@@ -82,7 +82,8 @@ def _cmd_comments(args: argparse.Namespace) -> int:
 
     review = reviews[0]
     print(f"PR #{review.pr} — {review.verdict} (model: {review.model})")
-    print(f"  {review.summary.splitlines()[0]}")
+    first_line = review.summary.splitlines()[0] if review.summary else "(no summary)"
+    print(f"  {first_line}")
 
     if not review.comments:
         print("  No comments")

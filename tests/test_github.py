@@ -55,6 +55,21 @@ def test_run_gh_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.returncode == 0
 
 
+def test_run_gh_with_input_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    """run_gh passes input_data to subprocess stdin."""
+    captured_kwargs: list[dict[str, Any]] = []
+
+    def mock_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured_kwargs.append(kwargs)
+        return _make_completed_process(stdout="ok\n")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    run_gh("api", "endpoint", "--input", "-", input_data='{"key": "value"}')
+
+    assert captured_kwargs[0]["input"] == '{"key": "value"}'
+
+
 def test_run_gh_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """run_gh raises RuntimeError on non-zero exit code."""
 
@@ -226,6 +241,19 @@ def test_post_review_with_comments(monkeypatch: pytest.MonkeyPatch) -> None:
     assert c1["start_line"] == 15
     assert c1["start_side"] == "RIGHT"
     assert c1["side"] == "RIGHT"
+
+
+def test_post_review_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """post_review raises RuntimeError when the API call fails."""
+
+    def mock_run(_args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _make_completed_process(returncode=1, stderr="permission denied")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result_obj = ReviewResult(verdict="approve", summary="LGTM")
+    with pytest.raises(RuntimeError, match="permission denied"):
+        post_review(pr=1, result=result_obj, owner="org", repo="repo", commit_sha="abc")
 
 
 def test_set_commit_status_success(monkeypatch: pytest.MonkeyPatch) -> None:

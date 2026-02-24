@@ -708,6 +708,49 @@ def test_compute_verdict_any_comment_blocks():
     assert _compute_verdict(comments) == "request_changes"
 
 
+def test_agentic_loop_exhaustion_returns_request_changes(monkeypatch):
+    """When LLM never calls submit_review, loop exhausts and returns request_changes."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=2)
+    diff = "diff --git a/f.py b/f.py\n"
+    pr_meta = _meta()
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        # Always return empty response (no tool calls, no content)
+        return LLMResponse(content=None, tool_calls=[], finish_reason="stop")
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    assert result.verdict == "request_changes"
+    assert "exhausted" in result.summary.lower()
+    assert "<!-- guardrails-review -->" in result.summary
+
+
+def test_run_resolve_failure_returns_1(monkeypatch, capsys):
+    """run_resolve returns 1 when get_review_threads raises RuntimeError."""
+
+    def failing_get_threads(pr, owner, repo):
+        msg = "API failure"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: _meta())
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_pr_diff",
+        lambda pr: "diff --git a/f.py b/f.py\n",
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", failing_get_threads)
+
+    result = run_resolve(42)
+
+    assert result == 1
+    captured = capsys.readouterr()
+    assert "Failed to fetch review threads" in captured.out
+
+
 def test_agentic_content_response_fallback(monkeypatch):
     """Model returning content instead of tool calls in agentic mode is parsed as JSON."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
