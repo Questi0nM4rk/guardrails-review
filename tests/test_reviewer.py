@@ -273,6 +273,7 @@ def test_run_review_posts_and_caches(tmp_path, monkeypatch):
     )
 
     posted = []
+    statuses = []
     monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
     monkeypatch.setattr("guardrails_review.reviewer.get_pr_metadata", lambda pr: pr_meta_dict)
     monkeypatch.setattr(
@@ -282,6 +283,10 @@ def test_run_review_posts_and_caches(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "guardrails_review.reviewer.post_review",
         lambda pr, result, owner, repo, sha: posted.append(result) or True,
+    )
+    monkeypatch.setattr(
+        "guardrails_review.reviewer.set_commit_status",
+        lambda *a, **kw: statuses.append(a),
     )
 
     result = run_review(53, project_dir=tmp_path)
@@ -295,6 +300,119 @@ def test_run_review_posts_and_caches(tmp_path, monkeypatch):
     assert cache_dir.exists()
     cache_files = list(cache_dir.glob("pr-53-*.json"))
     assert len(cache_files) == 1
+
+
+def test_run_review_sets_commit_status(tmp_path, monkeypatch):
+    """run_review sets pending status before and success/failure after."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text(
+        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
+    )
+
+    diff_text = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n+++ b/foo.py\n"
+        "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
+    )
+    pr_meta = {"title": "Test", "body": "desc", "headRefOid": "abc123", "baseRefName": "main"}
+    llm_response = json.dumps(
+        {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
+    )
+
+    statuses = []
+    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr("guardrails_review.reviewer.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(
+        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
+    )
+    monkeypatch.setattr("guardrails_review.reviewer.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(
+        "guardrails_review.reviewer.post_review",
+        lambda pr, result, owner, repo, sha: True,
+    )
+    monkeypatch.setattr(
+        "guardrails_review.reviewer.set_commit_status",
+        lambda owner, repo, sha, state, desc: statuses.append((state, desc)),
+    )
+
+    run_review(53, project_dir=tmp_path)
+
+    assert len(statuses) == 2
+    assert statuses[0][0] == "pending"
+    assert statuses[1][0] == "success"
+
+
+def test_run_review_status_failure_does_not_block(tmp_path, monkeypatch, capsys):
+    """If set_commit_status raises, the review still completes."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text(
+        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
+    )
+
+    diff_text = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n+++ b/foo.py\n"
+        "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
+    )
+    pr_meta = {"title": "Test", "body": "desc", "headRefOid": "abc123", "baseRefName": "main"}
+    llm_response = json.dumps(
+        {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
+    )
+
+    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr("guardrails_review.reviewer.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(
+        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
+    )
+    monkeypatch.setattr("guardrails_review.reviewer.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(
+        "guardrails_review.reviewer.post_review",
+        lambda pr, result, owner, repo, sha: True,
+    )
+
+    def failing_status(*_args, **_kwargs):
+        msg = "forbidden"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("guardrails_review.reviewer.set_commit_status", failing_status)
+
+    result = run_review(53, project_dir=tmp_path)
+
+    assert result == 0
+
+
+def test_run_review_dry_run_skips_status(tmp_path, monkeypatch, capsys):
+    """Dry run does not set commit status."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text(
+        '[config]\nmodel = "test/m"\n[review]\nagentic = false\n'
+    )
+
+    diff_text = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n+++ b/foo.py\n"
+        "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
+    )
+    pr_meta = {"title": "Test", "body": "desc", "headRefOid": "abc123", "baseRefName": "main"}
+    llm_response = json.dumps(
+        {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
+    )
+
+    statuses = []
+    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr("guardrails_review.reviewer.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(
+        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
+    )
+    monkeypatch.setattr(
+        "guardrails_review.reviewer.set_commit_status",
+        lambda *a, **kw: statuses.append(a),
+    )
+
+    result = run_review(53, dry_run=True, project_dir=tmp_path)
+
+    assert result == 0
+    assert len(statuses) == 0
 
 
 def test_run_review_invalid_lines_in_summary(tmp_path, monkeypatch, capsys):

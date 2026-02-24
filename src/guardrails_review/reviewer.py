@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING, Any
 from guardrails_review.cache import save_review
 from guardrails_review.config import load_config
 from guardrails_review.diff import parse_diff_hunks
-from guardrails_review.github import get_pr_diff, get_pr_metadata, get_repo_info, post_review
+from guardrails_review.github import (
+    get_pr_diff,
+    get_pr_metadata,
+    get_repo_info,
+    post_review,
+    set_commit_status,
+)
 from guardrails_review.llm import call_openrouter, call_openrouter_tools
 from guardrails_review.tools import TOOL_DEFINITIONS, ToolContext, execute_tool
 from guardrails_review.types import ReviewComment, ReviewConfig, ReviewResult
@@ -296,8 +302,28 @@ def run_review(
 
     owner, repo = get_repo_info()
     commit_sha = pr_meta["headRefOid"]
+
+    # Set pending commit status
+    try:
+        set_commit_status(owner, repo, commit_sha, "pending", "Review in progress")
+    except RuntimeError:
+        logger.warning("Failed to set pending commit status (non-fatal)")
+
     post_review(pr, final, owner, repo, commit_sha)
     save_review(final, project_dir)
+
+    # Set final commit status
+    try:
+        if verdict == "approve":
+            set_commit_status(owner, repo, commit_sha, "success", "Approved")
+        else:
+            n = len(valid_comments) + len(invalid_comments)
+            set_commit_status(
+                owner, repo, commit_sha, "failure", f"{n} defect(s) found"
+            )
+    except RuntimeError:
+        logger.warning("Failed to set final commit status (non-fatal)")
+
     print(f"Review posted for PR #{pr}: {verdict}")
     return 0
 

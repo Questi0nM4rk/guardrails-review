@@ -149,6 +149,39 @@ def post_review(
     return True
 
 
+def set_commit_status(
+    owner: str,
+    repo: str,
+    sha: str,
+    state: str,
+    description: str,
+) -> None:
+    """Set a commit status check on a specific SHA.
+
+    Args:
+        owner: Repository owner.
+        repo: Repository name.
+        sha: Commit SHA to set status on.
+        state: One of "pending", "success", "failure", "error".
+        description: Short description of the status.
+
+    Raises:
+        RuntimeError: If the API call fails.
+    """
+    run_gh(
+        "api",
+        f"repos/{owner}/{repo}/statuses/{sha}",
+        "--method",
+        "POST",
+        "-f",
+        f"state={state}",
+        "-f",
+        f"description={description}",
+        "-f",
+        "context=guardrails-review",
+    )
+
+
 def approve_pr(pr: int, body: str) -> bool:
     """Approve a pull request with a comment.
 

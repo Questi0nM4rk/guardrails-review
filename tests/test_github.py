@@ -16,6 +16,7 @@ from guardrails_review.github import (
     post_review,
     request_changes,
     run_gh,
+    set_commit_status,
 )
 from guardrails_review.types import ReviewComment, ReviewResult
 
@@ -201,6 +202,38 @@ def test_post_review_with_comments(monkeypatch: pytest.MonkeyPatch) -> None:
     assert c1["start_line"] == 15
     assert c1["start_side"] == "RIGHT"
     assert c1["side"] == "RIGHT"
+
+
+def test_set_commit_status_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """set_commit_status calls gh api with correct args."""
+    captured_args: list[list[str]] = []
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured_args.append(args)
+        return _make_completed_process(stdout="{}")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    set_commit_status("myorg", "myrepo", "abc123", "pending", "Review in progress")
+
+    assert len(captured_args) == 1
+    cmd = " ".join(captured_args[0])
+    assert "repos/myorg/myrepo/statuses/abc123" in cmd
+    assert "POST" in cmd
+    assert "pending" in cmd
+    assert "guardrails-review" in cmd
+
+
+def test_set_commit_status_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """set_commit_status raises RuntimeError on gh failure."""
+
+    def mock_run(_args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _make_completed_process(returncode=1, stderr="forbidden")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    with pytest.raises(RuntimeError, match="forbidden"):
+        set_commit_status("myorg", "myrepo", "abc123", "success", "OK")
 
 
 def test_approve_pr(monkeypatch: pytest.MonkeyPatch) -> None:
