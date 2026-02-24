@@ -993,3 +993,182 @@ def test_run_review_auto_resolves_stale_threads(tmp_path, monkeypatch, capsys):
 
     assert result == 0
     assert "stale-t1" in resolved_ids
+
+
+# --- Unresolved thread check before approve ---
+
+
+def _make_marked_thread(
+    thread_id: str,
+    *,
+    is_resolved: bool = False,
+    path: str = "src/main.py",
+    line: int = 10,
+    is_outdated: bool = False,
+) -> ReviewThread:
+    """Build a ReviewThread with the guardrails-review marker."""
+    return ReviewThread(
+        thread_id=thread_id,
+        path=path,
+        line=line,
+        body=f"<!-- guardrails-review -->\nSome defect found here",
+        is_resolved=is_resolved,
+        is_outdated=is_outdated,
+        author="github-actions[bot]",
+        created_at="2025-01-01T00:00:00Z",
+    )
+
+
+def _stub_clean_review(tmp_path, monkeypatch, *, existing_threads=None):
+    """Stub run_review deps for a clean review (0 new defects) with given threads.
+
+    Returns dict of captured calls for assertions.
+    """
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
+
+    diff_text = (
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n+++ b/src/main.py\n"
+        "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
+    )
+    pr_meta = {"title": "Test PR", "body": "test", "headRefOid": "abc123", "baseRefName": "main"}
+    llm_response = json.dumps(
+        {
+            "verdict": "approve",
+            "summary": "<!-- guardrails-review -->\nAll clean.",
+            "comments": [],
+        }
+    )
+    threads = existing_threads if existing_threads is not None else []
+    captured = {
+        "posted_reviews": [],
+        "set_statuses": [],
+        "resolved_threads": [],
+    }
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: threads
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(
+        f"{_REVIEWER}.post_review",
+        lambda pr, result, owner, repo, sha: captured["posted_reviews"].append(result) or True,
+    )
+    monkeypatch.setattr(
+        f"{_REVIEWER}.set_commit_status",
+        lambda owner, repo, sha, state, desc: captured["set_statuses"].append((state, desc)),
+    )
+    monkeypatch.setattr(
+        f"{_REVIEWER}.resolve_thread",
+        lambda tid: captured["resolved_threads"].append(tid) or True,
+    )
+
+    return captured
+
+
+def test_run_review_approve_blocked_by_unresolved_threads(tmp_path, monkeypatch):
+    """Review finds 0 new defects but 2 unresolved threads exist -> request_changes."""
+    threads = [
+        _make_marked_thread("thread-1", is_resolved=False),
+        _make_marked_thread("thread-2", is_resolved=False),
+        _make_marked_thread("thread-3", is_resolved=True),  # resolved, should not count
+    ]
+    captured = _stub_clean_review(tmp_path, monkeypatch, existing_threads=threads)
+
+    result = run_review(42, project_dir=tmp_path)
+
+    assert result == 0
+    posted = captured["posted_reviews"]
+    assert len(posted) == 1
+    assert posted[0].verdict == "request_changes"
+    assert "2 unresolved" in posted[0].summary
+
+
+def test_run_review_approve_when_all_threads_resolved(tmp_path, monkeypatch):
+    """Review finds 0 new defects and all prior threads resolved -> approve."""
+    threads = [
+        _make_marked_thread("thread-1", is_resolved=True),
+        _make_marked_thread("thread-2", is_resolved=True),
+    ]
+    captured = _stub_clean_review(tmp_path, monkeypatch, existing_threads=threads)
+
+    result = run_review(42, project_dir=tmp_path)
+
+    assert result == 0
+    posted = captured["posted_reviews"]
+    assert len(posted) == 1
+    assert posted[0].verdict == "approve"
+
+
+def test_run_review_approve_when_no_prior_threads(tmp_path, monkeypatch):
+    """Review finds 0 new defects and no prior threads at all -> approve."""
+    captured = _stub_clean_review(tmp_path, monkeypatch, existing_threads=[])
+
+    result = run_review(42, project_dir=tmp_path)
+
+    assert result == 0
+    posted = captured["posted_reviews"]
+    assert len(posted) == 1
+    assert posted[0].verdict == "approve"
+
+
+def test_unresolved_thread_check_happens_after_auto_resolve(tmp_path, monkeypatch):
+    """Thread that gets auto-resolved (outdated) should NOT block approval."""
+    # This thread is outdated, so auto-resolve will resolve it.
+    # After auto-resolve, there should be 0 unresolved threads -> approve.
+    threads = [
+        _make_marked_thread(
+            "thread-outdated",
+            is_resolved=False,
+            is_outdated=True,
+            path="src/main.py",
+            line=10,
+        ),
+    ]
+    captured = _stub_clean_review(tmp_path, monkeypatch, existing_threads=threads)
+
+    result = run_review(42, project_dir=tmp_path)
+
+    assert result == 0
+    # The outdated thread should have been auto-resolved
+    assert "thread-outdated" in captured["resolved_threads"]
+    # With 0 remaining unresolved threads, verdict should be approve
+    posted = captured["posted_reviews"]
+    assert len(posted) == 1
+    assert posted[0].verdict == "approve"
+
+
+def test_dry_run_shows_unresolved_thread_count(tmp_path, monkeypatch, capsys):
+    """Dry run should show that approval was blocked by unresolved threads."""
+    threads = [
+        _make_marked_thread("thread-1", is_resolved=False),
+        _make_marked_thread("thread-2", is_resolved=False),
+    ]
+    _stub_clean_review(tmp_path, monkeypatch, existing_threads=threads)
+
+    result = run_review(42, dry_run=True, project_dir=tmp_path)
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "unresolved" in output.lower()
+    assert "request_changes" in output
+
+
+def test_run_review_unresolved_threads_set_failure_status(tmp_path, monkeypatch):
+    """When approval blocked by unresolved threads, commit status should be failure."""
+    threads = [
+        _make_marked_thread("thread-1", is_resolved=False),
+    ]
+    captured = _stub_clean_review(tmp_path, monkeypatch, existing_threads=threads)
+
+    run_review(42, project_dir=tmp_path)
+
+    # Find the final status (last one set, not the "pending" one)
+    final_statuses = [s for s in captured["set_statuses"] if s[0] != "pending"]
+    assert len(final_statuses) == 1
+    assert final_statuses[0][0] == "failure"
