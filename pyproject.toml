@@ -10,7 +10,7 @@ readme = "README.md"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov>=4.0", "ruff>=0.4", "mutmut>=3.0", "pytest-bdd>=8.0"]
+dev = ["pytest>=8.0", "pytest-cov>=4.0", "ruff>=0.4", "mutmut>=3.0"]
 
 [project.scripts]
 guardrails-review = "guardrails_review.cli:main"
@@ -53,3 +53,15 @@ per-file-ignores."tests/**" = [
 include = ["src/guardrails_review"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
+
+[tool.mutmut]
+paths_to_mutate = ["src/guardrails_review/"]
+tests_dir = ["tests/"]
+do_not_mutate = [
+    "src/guardrails_review/__init__*",
+    "src/guardrails_review/cli*",
+    "src/guardrails_review/llm*",
+    "src/guardrails_review/github*",
+    "src/guardrails_review/tools*",
+    "src/guardrails_review/types*",
+]

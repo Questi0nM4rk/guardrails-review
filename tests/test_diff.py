@@ -201,3 +201,72 @@ index aaa..bbb 100644
     assert "image.png" not in result
     assert "code.py" in result
     assert result["code.py"] == {1, 2, 3}
+
+
+def test_parse_binary_between_text_files() -> None:
+    """Binary file between two text files should not leak lines into adjacent files."""
+    diff = """\
+diff --git a/first.py b/first.py
+index aaa..bbb 100644
+--- a/first.py
++++ b/first.py
+@@ -1,2 +1,3 @@
+ a
++b
+ c
+diff --git a/image.png b/image.png
+index aaa..bbb 100644
+Binary files a/image.png and b/image.png differ
+diff --git a/second.py b/second.py
+index ccc..ddd 100644
+--- a/second.py
++++ b/second.py
+@@ -1,2 +1,3 @@
+ x
++y
+ z
+"""
+    result = parse_diff_hunks(diff)
+    assert "image.png" not in result
+    assert result["first.py"] == {1, 2, 3}
+    assert result["second.py"] == {1, 2, 3}
+    # Only expected files appear in result
+    assert set(result.keys()) == {"first.py", "second.py"}
+
+
+def test_parse_result_keys_exact() -> None:
+    """Result dict contains only the expected file keys, nothing extra."""
+    diff = """\
+diff --git a/only.py b/only.py
+index aaa..bbb 100644
+--- a/only.py
++++ b/only.py
+@@ -1,2 +1,3 @@
+ line1
++added
+ line2
+"""
+    result = parse_diff_hunks(diff)
+    assert list(result.keys()) == ["only.py"]
+
+
+def test_parse_no_newline_marker_excluded_from_line_set() -> None:
+    r"""The '\ No newline at end of file' marker must not appear in valid lines.
+
+    Verifies the exact count so the marker is provably excluded.
+    """
+    diff = """\
+diff --git a/no_nl.py b/no_nl.py
+index aaa..bbb 100644
+--- a/no_nl.py
++++ b/no_nl.py
+@@ -1,2 +1,2 @@
+ unchanged
+-old_last
++new_last
+\\ No newline at end of file
+"""
+    result = parse_diff_hunks(diff)
+    # Exactly 2 lines: context "unchanged" at 1, addition "new_last" at 2
+    assert result["no_nl.py"] == {1, 2}
+    assert len(result["no_nl.py"]) == 2

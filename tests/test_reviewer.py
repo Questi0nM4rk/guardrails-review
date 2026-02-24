@@ -527,6 +527,93 @@ def test_agentic_fallback_to_oneshot(monkeypatch):
     assert "Fallback review" in result.summary
 
 
+def test_parse_response_comment_defaults():
+    """Comments with missing optional fields get correct defaults."""
+    raw = json.dumps(
+        {
+            "verdict": "approve",
+            "summary": "<!-- guardrails-review -->\nOK",
+            "comments": [
+                {"path": "f.py", "line": 5},  # missing body, severity, start_line
+            ],
+        }
+    )
+    result = parse_response(raw, "m", 1)
+
+    assert len(result.comments) == 1
+    c = result.comments[0]
+    assert c.body == ""
+    assert c.severity == "info"
+    assert c.start_line is None
+
+
+def test_parse_response_timestamp_is_set():
+    """parse_response sets a non-empty timestamp."""
+    raw = json.dumps({"verdict": "approve", "summary": "OK", "comments": []})
+    result = parse_response(raw, "m", 1)
+    assert result.timestamp != ""
+    assert "T" in result.timestamp  # ISO format
+
+
+def test_parse_response_preserves_existing_html_marker():
+    """If the summary already has the marker, it should not be duplicated."""
+    raw = json.dumps(
+        {
+            "verdict": "approve",
+            "summary": "<!-- guardrails-review -->\nAlready there",
+            "comments": [],
+        }
+    )
+    result = parse_response(raw, "m", 1)
+    # Marker appears exactly once
+    assert result.summary.count("<!-- guardrails-review -->") == 1
+
+
+def test_parse_response_with_start_line():
+    """Comments with start_line preserve it correctly."""
+    raw = json.dumps(
+        {
+            "verdict": "approve",
+            "summary": "OK",
+            "comments": [
+                {
+                    "path": "f.py",
+                    "line": 10,
+                    "severity": "warning",
+                    "body": "multi-line issue",
+                    "start_line": 7,
+                },
+            ],
+        }
+    )
+    result = parse_response(raw, "m", 1)
+
+    assert len(result.comments) == 1
+    assert result.comments[0].start_line == 7
+    assert result.comments[0].line == 10
+
+
+def test_build_result_verdict_default_when_missing():
+    """Missing verdict defaults to request_changes."""
+    raw = json.dumps({"summary": "No verdict key", "comments": []})
+    result = parse_response(raw, "m", 1)
+    assert result.verdict == "request_changes"
+
+
+def test_build_result_summary_default_when_missing():
+    """Missing summary gets a default value."""
+    raw = json.dumps({"verdict": "approve", "comments": []})
+    result = parse_response(raw, "m", 1)
+    assert "No summary provided" in result.summary or result.summary != ""
+
+
+def test_compute_verdict_info_only_approves():
+    """Info-only comments approve regardless of threshold."""
+    config = ReviewConfig(model="m", severity_threshold="error", auto_approve=True)
+    comments = [ReviewComment(path="f.py", line=1, body="x", severity="info")]
+    assert _compute_verdict(comments, config) == "approve"
+
+
 def test_agentic_content_response_fallback(monkeypatch):
     """Model returning content instead of tool calls in agentic mode is parsed as JSON."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)

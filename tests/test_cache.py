@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import re
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 from guardrails_review.cache import load_all_reviews, load_latest_review, save_review
+from guardrails_review.types import ReviewComment, ReviewResult
 
 if TYPE_CHECKING:
     from pathlib import Path
-from guardrails_review.types import ReviewComment, ReviewResult
 
 
 def _make_result(
@@ -181,3 +183,71 @@ def test_load_filters_by_pr(tmp_path: Path) -> None:
     all_pr2 = load_all_reviews(pr=2, project_dir=tmp_path)
     assert len(all_pr2) == 1
     assert all_pr2[0].summary == "PR 2"
+
+
+def test_save_review_collision_handling(tmp_path: Path) -> None:
+    """When two reviews save in the same second, filenames get _1, _2 suffixes."""
+    fixed_time = datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC)
+    with patch("guardrails_review.cache.datetime") as mock_dt:
+        mock_dt.now.return_value = fixed_time
+        mock_dt.UTC = UTC
+
+        r1 = _make_result(pr=99, summary="First")
+        p1 = save_review(r1, project_dir=tmp_path)
+
+        r2 = _make_result(pr=99, summary="Second")
+        p2 = save_review(r2, project_dir=tmp_path)
+
+        r3 = _make_result(pr=99, summary="Third")
+        p3 = save_review(r3, project_dir=tmp_path)
+
+    # First file has no suffix
+    assert p1.name == "pr-99-20260115T103000.json"
+    # Second file gets _1 suffix
+    assert p2.name == "pr-99-20260115T103000_1.json"
+    # Third file gets _2 suffix
+    assert p3.name == "pr-99-20260115T103000_2.json"
+
+    # All three are loadable and in order
+    reviews = load_all_reviews(pr=99, project_dir=tmp_path)
+    assert len(reviews) == 3
+    assert reviews[0].summary == "First"
+    assert reviews[1].summary == "Second"
+    assert reviews[2].summary == "Third"
+
+
+def test_save_review_json_is_indented(tmp_path: Path) -> None:
+    """Saved JSON is human-readable with exactly 2-space indentation."""
+    result = _make_result()
+    path = save_review(result, project_dir=tmp_path)
+
+    content = path.read_text()
+    # Re-parse and re-dump with indent=2 to compare
+    data = json.loads(content)
+    expected = json.dumps(data, indent=2)
+    assert content == expected
+
+
+def test_load_file_defaults_for_missing_keys(tmp_path: Path) -> None:
+    """_load_file uses correct defaults when optional keys are missing from JSON."""
+    cache_dir = tmp_path / ".guardrails-review" / "cache"
+    cache_dir.mkdir(parents=True)
+
+    # Write a minimal JSON file missing optional keys
+    minimal = {
+        "verdict": "approve",
+        "summary": "Clean code",
+        "comments": [],
+    }
+    path = cache_dir / "pr-1-20260101T000000.json"
+    path.write_text(json.dumps(minimal))
+
+    loaded = load_latest_review(pr=1, project_dir=tmp_path)
+    assert loaded is not None
+    assert loaded.verdict == "approve"
+    assert loaded.summary == "Clean code"
+    assert loaded.comments == []
+    # Defaults for missing optional fields
+    assert loaded.model == ""
+    assert loaded.timestamp == ""
+    assert loaded.pr == 0
