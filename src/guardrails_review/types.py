@@ -8,6 +8,16 @@ REVIEW_MARKER = "<!-- guardrails-review -->"
 
 
 @dataclass(frozen=True)
+class PRMetadata:
+    """Pull request metadata from GitHub."""
+
+    title: str
+    body: str
+    head_ref_oid: str
+    base_ref_name: str
+
+
+@dataclass(frozen=True)
 class ReviewConfig:
     """Configuration loaded from .guardrails-review.toml."""
 

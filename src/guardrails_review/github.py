@@ -10,6 +10,8 @@ import json
 import subprocess
 from typing import TYPE_CHECKING, Any
 
+from guardrails_review.types import PRMetadata
+
 if TYPE_CHECKING:
     from guardrails_review.types import ReviewResult
 
@@ -53,18 +55,23 @@ def get_pr_diff(pr: int) -> str:
     return proc.stdout
 
 
-def get_pr_metadata(pr: int) -> dict[str, str]:
-    """Fetch pull request metadata as a dict.
+def get_pr_metadata(pr: int) -> PRMetadata:
+    """Fetch pull request metadata as a typed dataclass.
 
     Args:
         pr: Pull request number.
 
     Returns:
-        Dict with keys: title, body, headRefOid, baseRefName.
+        PRMetadata with title, body, head_ref_oid, base_ref_name.
     """
     proc = run_gh("pr", "view", str(pr), "--json", "title,body,headRefOid,baseRefName")
-    result: dict[str, str] = json.loads(proc.stdout)
-    return result
+    data = json.loads(proc.stdout)
+    return PRMetadata(
+        title=data.get("title", ""),
+        body=data.get("body") or "",  # GitHub returns null for empty body
+        head_ref_oid=data.get("headRefOid", ""),
+        base_ref_name=data.get("baseRefName", ""),
+    )
 
 
 def get_repo_info() -> tuple[str, str]:
@@ -151,6 +158,9 @@ def post_review(
 
 def graphql(query: str, variables: dict[str, str | int] | None = None) -> dict[str, Any]:
     """Execute a GraphQL query via ``gh api graphql``.
+
+    Returns dict[str, Any] intentionally -- GraphQL response shape varies by query.
+    Callers must validate the response structure for their specific query.
 
     Args:
         query: GraphQL query string.

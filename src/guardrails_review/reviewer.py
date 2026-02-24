@@ -30,6 +30,7 @@ from guardrails_review.threads import (
 from guardrails_review.tools import TOOL_DEFINITIONS, ToolContext, execute_tool
 from guardrails_review.types import (
     REVIEW_MARKER,
+    PRMetadata,
     ReviewComment,
     ReviewConfig,
     ReviewResult,
@@ -187,7 +188,7 @@ def run_review(
     )
 
     owner, repo = get_repo_info()
-    commit_sha = pr_meta["headRefOid"]
+    commit_sha = pr_meta.head_ref_oid
 
     if not dry_run:
         _try_set_status(owner, repo, commit_sha, "pending", "Review in progress")
@@ -241,7 +242,7 @@ def run_review(
 def _run_oneshot_review(
     config: ReviewConfig,
     diff: str,
-    pr_meta: dict[str, str],
+    pr_meta: PRMetadata,
     pr: int,
 ) -> ReviewResult:
     """Run the original single-shot review (diff -> LLM JSON -> result)."""
@@ -253,7 +254,7 @@ def _run_oneshot_review(
 def _run_agentic_review(
     config: ReviewConfig,
     diff: str,
-    pr_meta: dict[str, str],
+    pr_meta: PRMetadata,
     pr: int,
 ) -> ReviewResult:
     """Run the agentic tool-use review loop.
@@ -262,7 +263,7 @@ def _run_agentic_review(
     Falls back to oneshot on tool-use API errors.
     """
     owner, repo = get_repo_info()
-    commit_sha = pr_meta["headRefOid"]
+    commit_sha = pr_meta.head_ref_oid
     tool_ctx = ToolContext(pr=pr, owner=owner, repo=repo, commit_sha=commit_sha)
 
     messages: list[dict[str, Any]] = build_agentic_messages(diff, config, pr_meta)
@@ -370,7 +371,7 @@ def run_resolve(
     pr_meta = get_pr_metadata(pr)
     diff = get_pr_diff(pr)
     valid_lines = parse_diff_hunks(diff)
-    head_sha = pr_meta["headRefOid"]
+    head_sha = pr_meta.head_ref_oid
 
     try:
         deleted = get_deleted_files(pr)

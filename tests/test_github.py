@@ -21,7 +21,7 @@ from guardrails_review.github import (
     run_gh,
     set_commit_status,
 )
-from guardrails_review.types import ReviewComment, ReviewResult
+from guardrails_review.types import PRMetadata, ReviewComment, ReviewResult
 
 
 def _make_completed_process(
@@ -85,7 +85,7 @@ def test_get_pr_diff(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_get_pr_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
-    """get_pr_metadata returns parsed JSON dict with PR fields."""
+    """get_pr_metadata returns PRMetadata dataclass."""
     metadata = {
         "title": "Fix bug",
         "body": "Description here",
@@ -101,9 +101,30 @@ def test_get_pr_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
 
     result = get_pr_metadata(42)
 
-    assert result["title"] == "Fix bug"
-    assert result["headRefOid"] == "abc123"
-    assert result["baseRefName"] == "main"
+    assert isinstance(result, PRMetadata)
+    assert result.title == "Fix bug"
+    assert result.body == "Description here"
+    assert result.head_ref_oid == "abc123"
+    assert result.base_ref_name == "main"
+
+
+def test_get_pr_metadata_null_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_pr_metadata handles null body from GitHub (returns empty string)."""
+    metadata = {
+        "title": "Fix bug",
+        "body": None,
+        "headRefOid": "abc123",
+        "baseRefName": "main",
+    }
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _make_completed_process(stdout=json.dumps(metadata))
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = get_pr_metadata(42)
+
+    assert result.body == ""
 
 
 def test_get_repo_info(monkeypatch: pytest.MonkeyPatch) -> None:

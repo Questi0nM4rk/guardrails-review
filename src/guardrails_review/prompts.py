@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from guardrails_review.types import ReviewConfig
+    from guardrails_review.types import PRMetadata, ReviewConfig
 
 _SYSTEM_PROMPT = """\
 You are a pedantic defect detector. Review the PR diff and return ONLY valid JSON:
@@ -78,13 +78,13 @@ Rules:
 def _build_user_content(
     diff: str,
     config: ReviewConfig,
-    pr_meta: dict[str, str],
+    pr_meta: PRMetadata,
 ) -> str:
     """Build the user message content shared by oneshot and agentic modes."""
     parts = [
-        f"# PR: {pr_meta.get('title', 'Untitled')}",
+        f"# PR: {pr_meta.title or 'Untitled'}",
         "",
-        pr_meta.get("body", "") or "(no description)",
+        pr_meta.body or "(no description)",
         "",
         "## Diff",
         "",
@@ -102,7 +102,7 @@ def _build_user_content(
 def build_messages(
     diff: str,
     config: ReviewConfig,
-    pr_meta: dict[str, str],
+    pr_meta: PRMetadata,
 ) -> list[dict[str, str]]:
     """Build the message list for the LLM call."""
     return [
@@ -114,7 +114,7 @@ def build_messages(
 def build_agentic_messages(
     diff: str,
     config: ReviewConfig,
-    pr_meta: dict[str, str],
+    pr_meta: PRMetadata,
 ) -> list[dict[str, Any]]:
     """Build the message list for the agentic tool-use review loop."""
     return [

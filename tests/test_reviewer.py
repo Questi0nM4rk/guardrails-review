@@ -17,6 +17,7 @@ from guardrails_review.reviewer import (
 )
 from guardrails_review.types import (
     LLMResponse,
+    PRMetadata,
     ReviewComment,
     ReviewConfig,
     ReviewResult,
@@ -24,11 +25,28 @@ from guardrails_review.types import (
     ToolCall,
 )
 
+_REVIEWER = "guardrails_review.reviewer"
+
+
+def _meta(
+    title: str = "T",
+    body: str = "",
+    head_ref_oid: str = "sha",
+    base_ref_name: str = "main",
+) -> PRMetadata:
+    """Build a PRMetadata for tests with sensible defaults."""
+    return PRMetadata(
+        title=title,
+        body=body,
+        head_ref_oid=head_ref_oid,
+        base_ref_name=base_ref_name,
+    )
+
 
 def test_build_messages_basic():
     """Build messages includes system prompt, PR title, and diff."""
     config = ReviewConfig(model="test/model")
-    pr_meta = {"title": "Fix bug", "body": "Fixes #1"}
+    pr_meta = _meta(title="Fix bug", body="Fixes #1")
     messages = build_messages("diff content", config, pr_meta)
 
     assert len(messages) == 2
@@ -40,7 +58,7 @@ def test_build_messages_basic():
 def test_system_prompt_defect_only():
     """System prompt focuses on defects only, not style/naming."""
     config = ReviewConfig(model="test/model")
-    messages = build_messages("diff", config, {"title": "T", "body": ""})
+    messages = build_messages("diff", config, _meta())
     prompt = messages[0]["content"]
 
     assert "bug" in prompt.lower() or "defect" in prompt.lower()
@@ -53,7 +71,7 @@ def test_system_prompt_defect_only():
 def test_build_messages_with_extra_instructions():
     """Extra instructions appear in user message."""
     config = ReviewConfig(model="test/model", extra_instructions="Check security")
-    messages = build_messages("diff", config, {"title": "T", "body": ""})
+    messages = build_messages("diff", config, _meta())
 
     assert "Check security" in messages[1]["content"]
 
@@ -61,7 +79,7 @@ def test_build_messages_with_extra_instructions():
 def test_build_messages_truncates_diff():
     """Long diffs are truncated to max_diff_chars."""
     config = ReviewConfig(model="test/model", max_diff_chars=10)
-    messages = build_messages("x" * 100, config, {"title": "T", "body": ""})
+    messages = build_messages("x" * 100, config, _meta())
 
     # The diff portion should be truncated
     assert "x" * 100 not in messages[1]["content"]
@@ -71,7 +89,7 @@ def test_build_messages_truncates_diff():
 def test_build_agentic_messages_uses_agentic_prompt():
     """Agentic messages use the agentic system prompt with tool instructions."""
     config = ReviewConfig(model="test/model")
-    messages = build_agentic_messages("diff", config, {"title": "T", "body": ""})
+    messages = build_agentic_messages("diff", config, _meta())
 
     assert len(messages) == 2
     assert "tools" in messages[0]["content"].lower()
@@ -228,12 +246,7 @@ def test_run_review_dry_run(tmp_path, monkeypatch, capsys):
         "--- a/foo.py\n+++ b/foo.py\n"
         "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
     )
-    pr_meta = {
-        "title": "Test",
-        "body": "desc",
-        "headRefOid": "abc123",
-        "baseRefName": "main",
-    }
+    pr_meta = _meta(title="Test", body="desc", head_ref_oid="abc123")
     llm_response = json.dumps(
         {
             "verdict": "approve",
@@ -242,11 +255,9 @@ def test_run_review_dry_run(tmp_path, monkeypatch, capsys):
         }
     )
 
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(
-        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
-    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
     monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
@@ -270,7 +281,7 @@ def test_run_review_posts_and_caches(tmp_path, monkeypatch):
         "--- a/foo.py\n+++ b/foo.py\n"
         "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
     )
-    pr_meta_dict = {"title": "Test", "body": "desc", "headRefOid": "abc123", "baseRefName": "main"}
+    pr_meta = _meta(title="Test", body="desc", head_ref_oid="abc123")
     llm_response = json.dumps(
         {
             "verdict": "approve",
@@ -281,18 +292,16 @@ def test_run_review_posts_and_caches(tmp_path, monkeypatch):
 
     posted = []
     statuses = []
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_metadata", lambda pr: pr_meta_dict)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(
-        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
-    )
-    monkeypatch.setattr("guardrails_review.reviewer.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(
-        "guardrails_review.reviewer.post_review",
+        f"{_REVIEWER}.post_review",
         lambda pr, result, owner, repo, sha: posted.append(result) or True,
     )
     monkeypatch.setattr(
-        "guardrails_review.reviewer.set_commit_status",
+        f"{_REVIEWER}.set_commit_status",
         lambda *a, **kw: statuses.append(a),
     )
 
@@ -319,24 +328,22 @@ def test_run_review_sets_commit_status(tmp_path, monkeypatch):
         "--- a/foo.py\n+++ b/foo.py\n"
         "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
     )
-    pr_meta = {"title": "Test", "body": "desc", "headRefOid": "abc123", "baseRefName": "main"}
+    pr_meta = _meta(title="Test", body="desc", head_ref_oid="abc123")
     llm_response = json.dumps(
         {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
     )
 
     statuses = []
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(
-        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
-    )
-    monkeypatch.setattr("guardrails_review.reviewer.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(
-        "guardrails_review.reviewer.post_review",
+        f"{_REVIEWER}.post_review",
         lambda pr, result, owner, repo, sha: True,
     )
     monkeypatch.setattr(
-        "guardrails_review.reviewer.set_commit_status",
+        f"{_REVIEWER}.set_commit_status",
         lambda owner, repo, sha, state, desc: statuses.append((state, desc)),
     )
 
@@ -357,19 +364,17 @@ def test_run_review_status_failure_does_not_block(tmp_path, monkeypatch, capsys)
         "--- a/foo.py\n+++ b/foo.py\n"
         "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
     )
-    pr_meta = {"title": "Test", "body": "desc", "headRefOid": "abc123", "baseRefName": "main"}
+    pr_meta = _meta(title="Test", body="desc", head_ref_oid="abc123")
     llm_response = json.dumps(
         {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
     )
 
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(
-        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
-    )
-    monkeypatch.setattr("guardrails_review.reviewer.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(
-        "guardrails_review.reviewer.post_review",
+        f"{_REVIEWER}.post_review",
         lambda pr, result, owner, repo, sha: True,
     )
 
@@ -377,7 +382,7 @@ def test_run_review_status_failure_does_not_block(tmp_path, monkeypatch, capsys)
         msg = "forbidden"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr("guardrails_review.reviewer.set_commit_status", failing_status)
+    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", failing_status)
 
     result = run_review(53, project_dir=tmp_path)
 
@@ -394,23 +399,21 @@ def test_run_review_dry_run_skips_status(tmp_path, monkeypatch, capsys):
         "--- a/foo.py\n+++ b/foo.py\n"
         "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
     )
-    pr_meta = {"title": "Test", "body": "desc", "headRefOid": "abc123", "baseRefName": "main"}
+    pr_meta = _meta(title="Test", body="desc", head_ref_oid="abc123")
     llm_response = json.dumps(
         {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
     )
 
     statuses = []
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(
-        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
-    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
     monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
     monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
     monkeypatch.setattr(
-        "guardrails_review.reviewer.set_commit_status",
+        f"{_REVIEWER}.set_commit_status",
         lambda *a, **kw: statuses.append(a),
     )
 
@@ -440,12 +443,10 @@ def test_run_review_invalid_lines_in_summary(tmp_path, monkeypatch, capsys):
         }
     )
 
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
-    pr_meta = {"title": "T", "body": "", "headRefOid": "sha", "baseRefName": "main"}
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(
-        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
-    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    pr_meta = _meta()
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
     monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
@@ -475,19 +476,9 @@ def test_oneshot_still_works(tmp_path, monkeypatch, capsys):
         }
     )
 
-    monkeypatch.setattr("guardrails_review.reviewer.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr(
-        "guardrails_review.reviewer.get_pr_metadata",
-        lambda pr: {
-            "title": "T",
-            "body": "",
-            "headRefOid": "sha",
-            "baseRefName": "main",
-        },
-    )
-    monkeypatch.setattr(
-        "guardrails_review.reviewer.call_openrouter", lambda msgs, model: llm_response
-    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: _meta())
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
     monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
@@ -504,14 +495,11 @@ def test_oneshot_still_works(tmp_path, monkeypatch, capsys):
 # --- Agentic review tests ---
 
 
-_REVIEWER = "guardrails_review.reviewer"
-
-
 def test_agentic_loop_calls_tools_then_submits(monkeypatch):
     """Agentic loop executes tools then processes submit_review to produce ReviewResult."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
-    pr_meta = {"title": "T", "body": "", "headRefOid": "sha123", "baseRefName": "main"}
+    pr_meta = _meta(head_ref_oid="sha123")
 
     call_count = {"n": 0}
 
@@ -558,12 +546,7 @@ def test_agentic_loop_max_iterations_forces_submit(monkeypatch):
     """When max_iterations is reached, tool_choice forces submit_review."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=2)
     diff = "diff --git a/f.py b/f.py\n"
-    pr_meta = {
-        "title": "T",
-        "body": "",
-        "headRefOid": "sha",
-        "baseRefName": "main",
-    }
+    pr_meta = _meta()
 
     call_count = {"n": 0}
     captured_tool_choice = {"val": None}
@@ -613,12 +596,7 @@ def test_agentic_fallback_to_oneshot(monkeypatch):
     """When agentic API call raises RuntimeError, falls back to oneshot."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
-    pr_meta = {
-        "title": "T",
-        "body": "",
-        "headRefOid": "sha",
-        "baseRefName": "main",
-    }
+    pr_meta = _meta()
 
     _api_err = "API error 400: tools not supported"
 
@@ -734,12 +712,7 @@ def test_agentic_content_response_fallback(monkeypatch):
     """Model returning content instead of tool calls in agentic mode is parsed as JSON."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n"
-    pr_meta = {
-        "title": "T",
-        "body": "",
-        "headRefOid": "sha",
-        "baseRefName": "main",
-    }
+    pr_meta = _meta()
 
     def fake_call(messages, model, *, tools, tool_choice=None):
         return LLMResponse(
@@ -835,10 +808,7 @@ def test_run_resolve_resolves_threads(monkeypatch, capsys):
 
     resolved_ids = []
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(
-        f"{_REVIEWER}.get_pr_metadata",
-        lambda pr: {"title": "T", "body": "", "headRefOid": "sha", "baseRefName": "main"},
-    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: _meta())
     monkeypatch.setattr(
         f"{_REVIEWER}.get_pr_diff",
         lambda pr: (
@@ -876,10 +846,7 @@ def test_run_resolve_handles_failed_resolution(monkeypatch, capsys):
     ]
 
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(
-        f"{_REVIEWER}.get_pr_metadata",
-        lambda pr: {"title": "T", "body": "", "headRefOid": "sha", "baseRefName": "main"},
-    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: _meta())
     monkeypatch.setattr(
         f"{_REVIEWER}.get_pr_diff",
         lambda pr: "diff --git a/x.py b/x.py\n",
@@ -908,7 +875,7 @@ def test_run_review_dedup_removes_duplicate_comments(tmp_path, monkeypatch, caps
         "--- a/foo.py\n+++ b/foo.py\n"
         "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
     )
-    pr_meta = {"title": "T", "body": "", "headRefOid": "sha", "baseRefName": "main"}
+    pr_meta = _meta()
     # LLM returns a comment on foo.py:2 which already exists as an unresolved thread
     llm_response = json.dumps(
         {
@@ -970,7 +937,7 @@ def test_run_review_auto_resolves_stale_threads(tmp_path, monkeypatch, capsys):
         "--- a/foo.py\n+++ b/foo.py\n"
         "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
     )
-    pr_meta = {"title": "T", "body": "", "headRefOid": "sha", "baseRefName": "main"}
+    pr_meta = _meta()
     llm_response = json.dumps(
         {
             "verdict": "approve",
@@ -1047,7 +1014,7 @@ def _stub_clean_review(tmp_path, monkeypatch, *, existing_threads=None):
         "--- a/src/main.py\n+++ b/src/main.py\n"
         "@@ -1,3 +1,4 @@\n context\n+added line\n more\n end\n"
     )
-    pr_meta = {"title": "Test PR", "body": "test", "headRefOid": "abc123", "baseRefName": "main"}
+    pr_meta = _meta(title="Test PR", body="test", head_ref_oid="abc123")
     llm_response = json.dumps(
         {
             "verdict": "approve",
