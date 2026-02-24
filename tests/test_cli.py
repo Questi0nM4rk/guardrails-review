@@ -151,3 +151,33 @@ def test_resolve_dry_run(monkeypatch, capsys):
 
     assert result == 0
     assert calls == [(42, True)]
+
+
+def test_context_subcommand(monkeypatch, capsys):
+    """Context subcommand outputs JSON to stdout."""
+    monkeypatch.setattr(
+        "guardrails_review.cli.build_agent_context",
+        lambda pr, max_comments=20: {"pr": pr, "unresolved": [], "total_unresolved": 0},
+    )
+
+    result = main(["context", "--pr", "42"])
+
+    assert result == 0
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data["pr"] == 42
+
+
+def test_context_max_comments(monkeypatch, capsys):
+    """Context --max-comments passes value through."""
+    captured_kwargs = {}
+
+    def fake_build(pr, max_comments=20):
+        captured_kwargs["max_comments"] = max_comments
+        return {"pr": pr}
+
+    monkeypatch.setattr("guardrails_review.cli.build_agent_context", fake_build)
+
+    main(["context", "--pr", "42", "--max-comments", "5"])
+
+    assert captured_kwargs["max_comments"] == 5
