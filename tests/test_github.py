@@ -10,11 +10,14 @@ import pytest
 
 from guardrails_review.github import (
     approve_pr,
+    get_deleted_files,
     get_pr_diff,
     get_pr_metadata,
     get_repo_info,
+    graphql,
     post_review,
     request_changes,
+    resolve_thread,
     run_gh,
     set_commit_status,
 )
@@ -282,3 +285,110 @@ def test_request_changes_pr(monkeypatch: pytest.MonkeyPatch) -> None:
         "-b",
         "Please fix",
     ]
+
+
+# --- graphql ---
+
+
+def test_graphql_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """graphql returns parsed JSON from gh api graphql."""
+    response = {"data": {"repository": {"name": "test"}}}
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert "graphql" in args
+        return _make_completed_process(stdout=json.dumps(response))
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = graphql("query { repository { name } }")
+
+    assert result == response
+
+
+def test_graphql_with_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """graphql passes variables via -f and -F flags."""
+    captured_args: list[list[str]] = []
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured_args.append(args)
+        return _make_completed_process(stdout='{"data": {}}')
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    graphql(
+        "query($pr: Int!) { pullRequest(number: $pr) { id } }",
+        variables={"pr": 42, "owner": "myorg"},
+    )
+
+    cmd = " ".join(captured_args[0])
+    # int variable uses -F, string uses -f
+    assert "-F pr=42" in cmd
+    assert "-f owner=myorg" in cmd
+
+
+# --- resolve_thread ---
+
+
+def test_resolve_thread_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """resolve_thread calls GraphQL mutation and returns True."""
+    response = {
+        "data": {"resolveReviewThread": {"thread": {"id": "t1", "isResolved": True}}}
+    }
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _make_completed_process(stdout=json.dumps(response))
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = resolve_thread("t1")
+
+    assert result is True
+
+
+def test_resolve_thread_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """resolve_thread returns False on failure."""
+
+    def mock_run(_args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _make_completed_process(returncode=1, stderr="error")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = resolve_thread("t1")
+
+    assert result is False
+
+
+# --- get_deleted_files ---
+
+
+def test_get_deleted_files_returns_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_deleted_files returns set of removed file paths."""
+    pr_files = {
+        "files": [
+            {"path": "a.py", "additions": 10, "deletions": 0},
+            {"path": "deleted.py", "additions": 0, "deletions": 20, "status": "removed"},
+            {"path": "renamed.py", "additions": 5, "deletions": 5, "status": "renamed"},
+        ]
+    }
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _make_completed_process(stdout=json.dumps(pr_files))
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = get_deleted_files(42)
+
+    assert result == {"deleted.py"}
+
+
+def test_get_deleted_files_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_deleted_files returns empty set when no files deleted."""
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _make_completed_process(stdout=json.dumps({"files": []}))
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = get_deleted_files(42)
+
+    assert result == set()

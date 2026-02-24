@@ -55,3 +55,26 @@ class ReviewResult:
     model: str = ""
     timestamp: str = ""
     pr: int = 0
+
+
+@dataclass(frozen=True)
+class ReviewThread:
+    """A review thread fetched from GitHub GraphQL API."""
+
+    thread_id: str
+    path: str
+    line: int | None
+    body: str
+    is_resolved: bool
+    is_outdated: bool
+    author: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ThreadResolution:
+    """Result of checking whether a thread can be auto-resolved."""
+
+    thread_id: str
+    resolved: bool
+    reason: str

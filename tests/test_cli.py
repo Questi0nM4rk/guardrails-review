@@ -123,3 +123,31 @@ def test_approve_request_changes(monkeypatch, capsys):
 
     assert result == 0
     assert calls[0] == ("rc", 7, "Fix X")
+
+
+def test_resolve_subcommand(monkeypatch, capsys):
+    """Resolve subcommand calls run_resolve."""
+    calls = []
+    monkeypatch.setattr(
+        "guardrails_review.cli.run_resolve",
+        lambda pr, dry_run=False: calls.append((pr, dry_run)) or 0,
+    )
+
+    result = main(["resolve", "--pr", "42"])
+
+    assert result == 0
+    assert calls == [(42, False)]
+
+
+def test_resolve_dry_run(monkeypatch, capsys):
+    """Resolve --dry-run passes dry_run=True."""
+    calls = []
+    monkeypatch.setattr(
+        "guardrails_review.cli.run_resolve",
+        lambda pr, dry_run=False: calls.append((pr, dry_run)) or 0,
+    )
+
+    result = main(["resolve", "--pr", "42", "--dry-run"])
+
+    assert result == 0
+    assert calls == [(42, True)]

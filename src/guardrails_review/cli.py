@@ -9,7 +9,7 @@ from dataclasses import asdict
 
 from guardrails_review.cache import load_all_reviews, load_latest_review
 from guardrails_review.github import approve_pr, request_changes
-from guardrails_review.reviewer import run_review
+from guardrails_review.reviewer import run_resolve, run_review
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -37,6 +37,13 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="request_changes_msg",
         metavar="MSG",
         help="Request changes instead of approving",
+    )
+
+    # resolve
+    resolve_p = sub.add_parser("resolve", help="Auto-resolve stale review threads")
+    resolve_p.add_argument("--pr", type=int, required=True, help="PR number")
+    resolve_p.add_argument(
+        "--dry-run", action="store_true", help="Print resolvable threads without resolving"
     )
 
     return parser
@@ -85,6 +92,10 @@ def _cmd_approve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_resolve(args: argparse.Namespace) -> int:
+    return run_resolve(args.pr, dry_run=args.dry_run)
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = _build_parser()
@@ -98,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         "review": _cmd_review,
         "comments": _cmd_comments,
         "approve": _cmd_approve,
+        "resolve": _cmd_resolve,
     }
     return handlers[args.command](args)
 

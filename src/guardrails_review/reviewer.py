@@ -12,13 +12,21 @@ from guardrails_review.cache import save_review
 from guardrails_review.config import load_config
 from guardrails_review.diff import parse_diff_hunks
 from guardrails_review.github import (
+    get_deleted_files,
     get_pr_diff,
     get_pr_metadata,
     get_repo_info,
     post_review,
+    resolve_thread,
     set_commit_status,
 )
 from guardrails_review.llm import call_openrouter, call_openrouter_tools
+from guardrails_review.threads import (
+    deduplicate_comments,
+    find_resolvable_threads,
+    get_our_threads,
+    get_review_threads,
+)
 from guardrails_review.tools import TOOL_DEFINITIONS, ToolContext, execute_tool
 from guardrails_review.types import ReviewComment, ReviewConfig, ReviewResult
 
@@ -253,6 +261,65 @@ def validate_comments(
     return valid, invalid
 
 
+def _try_set_status(owner: str, repo: str, sha: str, state: str, description: str) -> None:
+    """Set commit status, logging but not raising on failure."""
+    try:
+        set_commit_status(owner, repo, sha, state, description)
+    except RuntimeError:
+        logger.warning("Failed to set %s commit status (non-fatal)", state)
+
+
+def _try_dedup(
+    pr: int,
+    final: ReviewResult,
+    invalid_comments: list[ReviewComment],
+    owner: str,
+    repo: str,
+) -> tuple[ReviewResult, list]:
+    """Deduplicate comments against existing threads."""
+    our_existing: list = []
+    try:
+        existing_threads = get_review_threads(pr, owner, repo)
+        our_existing = get_our_threads(existing_threads)
+        deduped = deduplicate_comments(final.comments, our_existing)
+        if len(deduped) != len(final.comments):
+            logger.info(
+                "Deduplication removed %d comment(s)",
+                len(final.comments) - len(deduped),
+            )
+            verdict = _compute_verdict(deduped + invalid_comments)
+            final = ReviewResult(
+                verdict=verdict,
+                summary=final.summary,
+                comments=deduped,
+                model=final.model,
+                timestamp=final.timestamp,
+                pr=pr,
+            )
+    except RuntimeError:
+        logger.warning("Failed to fetch threads for deduplication (non-fatal)")
+
+    return final, our_existing
+
+
+def _try_auto_resolve(
+    pr: int,
+    our_existing: list,
+    valid_lines: dict[str, set[int]],
+    commit_sha: str,
+) -> None:
+    """Auto-resolve stale threads, logging failures."""
+    try:
+        deleted = get_deleted_files(pr)
+        unresolved = [t for t in our_existing if not t.is_resolved]
+        resolutions = find_resolvable_threads(unresolved, valid_lines, deleted, commit_sha)
+        for r in resolutions:
+            if resolve_thread(r.thread_id):
+                logger.info("Auto-resolved %s: %s", r.thread_id, r.reason)
+    except RuntimeError:
+        logger.warning("Failed to auto-resolve threads (non-fatal)")
+
+
 def run_review(
     pr: int,
     *,
@@ -303,28 +370,25 @@ def run_review(
     owner, repo = get_repo_info()
     commit_sha = pr_meta["headRefOid"]
 
-    # Set pending commit status
-    try:
-        set_commit_status(owner, repo, commit_sha, "pending", "Review in progress")
-    except RuntimeError:
-        logger.warning("Failed to set pending commit status (non-fatal)")
+    _try_set_status(owner, repo, commit_sha, "pending", "Review in progress")
+
+    # Deduplicate comments against existing threads
+    final, our_existing = _try_dedup(pr, final, invalid_comments, owner, repo)
 
     post_review(pr, final, owner, repo, commit_sha)
     save_review(final, project_dir)
 
-    # Set final commit status
-    try:
-        if verdict == "approve":
-            set_commit_status(owner, repo, commit_sha, "success", "Approved")
-        else:
-            n = len(valid_comments) + len(invalid_comments)
-            set_commit_status(
-                owner, repo, commit_sha, "failure", f"{n} defect(s) found"
-            )
-    except RuntimeError:
-        logger.warning("Failed to set final commit status (non-fatal)")
+    # Auto-resolve stale threads after posting
+    _try_auto_resolve(pr, our_existing, valid_lines, commit_sha)
 
-    print(f"Review posted for PR #{pr}: {verdict}")
+    # Set final commit status
+    n = len(final.comments) + len(invalid_comments)
+    if final.verdict == "approve":
+        _try_set_status(owner, repo, commit_sha, "success", "Approved")
+    else:
+        _try_set_status(owner, repo, commit_sha, "failure", f"{n} defect(s) found")
+
+    print(f"Review posted for PR #{pr}: {final.verdict}")
     return 0
 
 
@@ -426,6 +490,66 @@ def _compute_verdict(comments: list[ReviewComment]) -> str:
     if comments:
         return "request_changes"
     return "approve"
+
+
+def run_resolve(
+    pr: int,
+    *,
+    dry_run: bool = False,
+) -> int:
+    """Auto-resolve stale review threads on a PR.
+
+    Fetches our review threads, checks which can be resolved,
+    and resolves them via GitHub GraphQL API.
+
+    Args:
+        pr: Pull request number.
+        dry_run: If True, print resolvable threads without resolving.
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    owner, repo = get_repo_info()
+    pr_meta = get_pr_metadata(pr)
+    diff = get_pr_diff(pr)
+    valid_lines = parse_diff_hunks(diff)
+    head_sha = pr_meta["headRefOid"]
+
+    try:
+        deleted = get_deleted_files(pr)
+    except RuntimeError:
+        logger.warning("Failed to fetch deleted files, assuming none")
+        deleted = set()
+
+    try:
+        all_threads = get_review_threads(pr, owner, repo)
+    except RuntimeError:
+        logger.warning("Failed to fetch review threads")
+        print("Failed to fetch review threads")
+        return 1
+
+    our_threads = get_our_threads(all_threads)
+    unresolved = [t for t in our_threads if not t.is_resolved]
+    resolutions = find_resolvable_threads(unresolved, valid_lines, deleted, head_sha)
+
+    if dry_run:
+        print(f"=== Resolve Dry Run: PR #{pr} ===")
+        print(f"Our threads: {len(our_threads)} ({len(unresolved)} unresolved)")
+        print(f"Resolvable: {len(resolutions)}")
+        for r in resolutions:
+            print(f"  {r.thread_id}: {r.reason}")
+        return 0
+
+    resolved_count = 0
+    for r in resolutions:
+        if resolve_thread(r.thread_id):
+            resolved_count += 1
+            logger.info("Resolved %s: %s", r.thread_id, r.reason)
+        else:
+            logger.warning("Failed to resolve %s", r.thread_id)
+
+    print(f"Resolved {resolved_count}/{len(resolutions)} stale threads on PR #{pr}")
+    return 0
 
 
 def _print_dry_run(result: ReviewResult) -> None:

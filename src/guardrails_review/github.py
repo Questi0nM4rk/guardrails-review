@@ -149,6 +149,71 @@ def post_review(
     return True
 
 
+def graphql(query: str, variables: dict | None = None) -> dict:
+    """Execute a GraphQL query via ``gh api graphql``.
+
+    Args:
+        query: GraphQL query string.
+        variables: Optional variables dict. Int values use ``-F``, strings use ``-f``.
+
+    Returns:
+        Parsed JSON response dict.
+
+    Raises:
+        RuntimeError: If the command fails.
+    """
+    args: list[str] = ["api", "graphql", "-f", f"query={query}"]
+    if variables:
+        for key, value in variables.items():
+            if isinstance(value, int):
+                args.extend(["-F", f"{key}={value}"])
+            else:
+                args.extend(["-f", f"{key}={value}"])
+    proc = run_gh(*args)
+    return json.loads(proc.stdout)
+
+
+def resolve_thread(thread_id: str) -> bool:
+    """Resolve a review thread via GraphQL mutation.
+
+    Args:
+        thread_id: GraphQL node ID of the thread.
+
+    Returns:
+        True if resolved successfully, False otherwise.
+    """
+    mutation = """
+    mutation($threadId: ID!) {
+      resolveReviewThread(input: {threadId: $threadId}) {
+        thread { id isResolved }
+      }
+    }
+    """
+    try:
+        graphql(mutation, variables={"threadId": thread_id})
+    except RuntimeError:
+        return False
+    return True
+
+
+def get_deleted_files(pr: int) -> set[str]:
+    """Get the set of files deleted in a pull request.
+
+    Args:
+        pr: Pull request number.
+
+    Returns:
+        Set of file paths with status "removed".
+    """
+    proc = run_gh("pr", "view", str(pr), "--json", "files")
+    data = json.loads(proc.stdout)
+    return {
+        f["path"]
+        for f in data.get("files", [])
+        if f.get("status") == "removed"
+    }
+
+
 def set_commit_status(
     owner: str,
     repo: str,
