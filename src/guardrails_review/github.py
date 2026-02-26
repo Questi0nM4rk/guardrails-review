@@ -34,8 +34,8 @@ def run_gh(
     Raises:
         RuntimeError: If the command exits with a non-zero return code.
     """
-    proc = subprocess.run(  # noqa: S603 — args are controlled by callers in this module
-        ["gh", *args],  # noqa: S607 — "gh" is a known CLI binary
+    proc = subprocess.run(
+        ["gh", *args],
         capture_output=True,
         text=True,
         check=False,
@@ -151,7 +151,9 @@ def post_review(
     return True
 
 
-def graphql(query: str, variables: dict[str, str | int] | None = None) -> dict[str, Any]:
+def graphql(
+    query: str, variables: dict[str, str | int] | None = None
+) -> dict[str, Any]:
     """Execute a GraphQL query via ``gh api graphql``.
 
     Returns dict[str, Any] intentionally -- GraphQL response shape varies by query.
@@ -175,7 +177,8 @@ def graphql(query: str, variables: dict[str, str | int] | None = None) -> dict[s
             else:
                 args.extend(["-f", f"{key}={value}"])
     proc = run_gh(*args)
-    return json.loads(proc.stdout)
+    result: dict[str, Any] = json.loads(proc.stdout)
+    return result
 
 
 def resolve_thread(thread_id: str) -> bool:

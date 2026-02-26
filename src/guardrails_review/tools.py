@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import json
 import logging
 import re
-from dataclasses import dataclass
 from typing import Any
 
 from guardrails_review.github import run_gh
@@ -43,13 +43,15 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
                     "start_line": {
                         "type": "integer",
                         "description": (
-                            "First line to return (1-indexed, inclusive). Omit for full file."
+                            "First line to return (1-indexed, inclusive)."
+                            " Omit for full file."
                         ),
                     },
                     "end_line": {
                         "type": "integer",
                         "description": (
-                            "Last line to return (1-indexed, inclusive). Omit for full file."
+                            "Last line to return (1-indexed, inclusive)."
+                            " Omit for full file."
                         ),
                     },
                 },
@@ -61,7 +63,9 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         "type": "function",
         "function": {
             "name": "list_changed_files",
-            "description": "List all files changed in the pull request with their change status.",
+            "description": (
+                "List all files changed in the pull request with their change status."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -107,7 +111,8 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
                     "summary": {
                         "type": "string",
                         "description": (
-                            "Review summary (include <!-- guardrails-review --> marker)."
+                            "Review summary (include"
+                            " <!-- guardrails-review --> marker)."
                         ),
                     },
                     "comments": {
@@ -221,7 +226,9 @@ def _list_changed_files(_args: dict[str, Any], ctx: ToolContext) -> str:
     return "\n".join(lines)
 
 
-_GITHUB_QUALIFIER_RE = re.compile(r"\b(repo|org|user|path|language|filename):\S+", re.IGNORECASE)
+_GITHUB_QUALIFIER_RE = re.compile(
+    r"\b(repo|org|user|path|language|filename):\S+", re.IGNORECASE
+)
 
 
 def _search_code(args: dict[str, Any], ctx: ToolContext) -> str:

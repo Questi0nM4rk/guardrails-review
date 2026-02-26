@@ -15,7 +15,7 @@ from guardrails_review.tools import (
 )
 
 
-@pytest.fixture
+@pytest.fixture()
 def ctx():
     """Standard tool context for tests."""
     return ToolContext(pr=42, owner="acme", repo="widgets", commit_sha="abc123")
@@ -76,7 +76,9 @@ def test_read_file_rejects_absolute_path(ctx):
 
 def test_read_file_rejects_dot_dot_traversal(ctx):
     """read_file rejects paths containing '..' components."""
-    result = execute_tool("read_file", json.dumps({"path": "src/../../etc/passwd"}), ctx)
+    result = execute_tool(
+        "read_file", json.dumps({"path": "src/../../etc/passwd"}), ctx
+    )
 
     assert "Invalid path" in result
 
@@ -185,12 +187,14 @@ def test_search_code_success(monkeypatch, ctx):
 
 
 def test_search_code_strips_github_qualifiers(monkeypatch, ctx):
-    """search_code strips repo:/org:/user:/path:/language:/filename: qualifiers from query."""
+    """search_code strips GitHub search qualifiers from query."""
     captured_queries = []
 
     def fake_run_gh(*args, **kwargs):
         # Capture the -f q=... argument
-        captured_queries.extend(a[2:] for a in args if isinstance(a, str) and a.startswith("q="))
+        captured_queries.extend(
+            a[2:] for a in args if isinstance(a, str) and a.startswith("q=")
+        )
         return _gh_mock("src/main.py:def hello():\n")
 
     monkeypatch.setattr("guardrails_review.tools.run_gh", fake_run_gh)
@@ -246,7 +250,7 @@ def test_execute_tool_unknown_raises(ctx):
 
 
 def test_execute_tool_submit_review_not_dispatched(ctx):
-    """submit_review is not a dispatchable tool (handled by the loop, not execute_tool)."""
+    """submit_review is handled by the loop, not execute_tool."""
     with pytest.raises(ValueError, match="Unknown tool: submit_review"):
         execute_tool("submit_review", "{}", ctx)
 
@@ -267,10 +271,14 @@ def test_tool_definitions_have_required_structure():
 
 def test_submit_review_schema_has_no_severity():
     """submit_review tool schema should not include severity field."""
-    submit_tool = next(t for t in TOOL_DEFINITIONS if t["function"]["name"] == "submit_review")
-    comment_props = submit_tool["function"]["parameters"]["properties"]["comments"]["items"][
-        "properties"
-    ]
+    submit_tool = next(
+        t for t in TOOL_DEFINITIONS if t["function"]["name"] == "submit_review"
+    )
+    comment_props = submit_tool["function"]["parameters"]["properties"]["comments"][
+        "items"
+    ]["properties"]
     assert "severity" not in comment_props
-    required = submit_tool["function"]["parameters"]["properties"]["comments"]["items"]["required"]
+    required = submit_tool["function"]["parameters"]["properties"]["comments"]["items"][
+        "required"
+    ]
     assert "severity" not in required

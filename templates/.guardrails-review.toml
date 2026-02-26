@@ -2,11 +2,11 @@
 # SETUP: Set model below, add OPENROUTER_KEY to GitHub secrets.
 
 [config]
-model = ""  # REQUIRED — e.g. "minimax/minimax-m2.5", "anthropic/claude-sonnet-4"
+model = "" # REQUIRED — e.g. "minimax/minimax-m2.5", "anthropic/claude-sonnet-4"
 
 [review]
 # max_diff_chars = 120000
-agentic = true          # Enable tool-use loop for context-gathering before review
+agentic = true # Enable tool-use loop for context-gathering before review
 # max_iterations = 5    # Max tool-use rounds before forcing review submission
 
 extra_instructions = """

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import json
 import re
-from datetime import UTC, datetime
 from typing import Any
 
 from guardrails_review.types import (
@@ -85,15 +85,19 @@ def _build_result_from_parsed(
 def _try_parse_json(raw: str) -> dict[str, Any] | None:
     """Attempt to parse JSON, trying raw first then extracting from code blocks."""
     try:
-        return json.loads(raw)
+        result: dict[str, Any] = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
         pass
+    else:
+        return result
 
     match = _JSON_BLOCK_RE.search(raw)
     if match:
         try:
-            return json.loads(match.group(1))
+            block_result: dict[str, Any] = json.loads(match.group(1))
         except (json.JSONDecodeError, ValueError):
             pass
+        else:
+            return block_result
 
     return None

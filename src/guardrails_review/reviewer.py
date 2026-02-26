@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
+import logging
 from typing import TYPE_CHECKING, Any
 
 from guardrails_review.cache import save_review
@@ -30,15 +30,18 @@ from guardrails_review.threads import (
 from guardrails_review.tools import TOOL_DEFINITIONS, ToolContext, execute_tool
 from guardrails_review.types import (
     REVIEW_MARKER,
-    PRMetadata,
-    ReviewComment,
-    ReviewConfig,
     ReviewResult,
-    ReviewThread,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from guardrails_review.types import (
+        PRMetadata,
+        ReviewComment,
+        ReviewConfig,
+        ReviewThread,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,9 @@ def validate_comments(
     return valid, invalid
 
 
-def _try_set_status(owner: str, repo: str, sha: str, state: str, description: str) -> None:
+def _try_set_status(
+    owner: str, repo: str, sha: str, state: str, description: str
+) -> None:
     """Set commit status, logging but not raising on failure."""
     try:
         set_commit_status(owner, repo, sha, state, description)
@@ -118,7 +123,9 @@ def _try_auto_resolve(
     try:
         deleted = get_deleted_files(pr)
         unresolved = [t for t in our_existing if not t.is_resolved]
-        resolutions = find_resolvable_threads(unresolved, valid_lines, deleted, commit_sha)
+        resolutions = find_resolvable_threads(
+            unresolved, valid_lines, deleted, commit_sha
+        )
         for r in resolutions:
             if resolve_thread(r.thread_id):
                 resolved_ids.add(r.thread_id)
@@ -141,7 +148,11 @@ def _check_unresolved_threads(
     Returns:
         List of threads that are still unresolved.
     """
-    return [t for t in our_threads if not t.is_resolved and t.thread_id not in auto_resolved_ids]
+    return [
+        t
+        for t in our_threads
+        if not t.is_resolved and t.thread_id not in auto_resolved_ids
+    ]
 
 
 def run_review(
@@ -171,7 +182,9 @@ def run_review(
     # Append invalid comments to summary body
     summary = result.summary
     if invalid_comments:
-        summary += "\n\n---\n**Comments on lines outside diff (could not post inline):**\n"
+        summary += (
+            "\n\n---\n**Comments on lines outside diff (could not post inline):**\n"
+        )
         for c in invalid_comments:
             summary += f"\n- `{c.path}:{c.line}`: {c.body}"
 

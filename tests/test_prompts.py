@@ -36,7 +36,9 @@ def test_agentic_prompt_contains_tool_instructions():
 def test_build_user_content_includes_title_and_diff():
     """User content includes PR title and diff text."""
     config = ReviewConfig(model="m")
-    content = _build_user_content("diff text", config, _meta(title="My PR", body="desc"))
+    content = _build_user_content(
+        "diff text", config, _meta(title="My PR", body="desc")
+    )
 
     assert "My PR" in content
     assert "diff text" in content

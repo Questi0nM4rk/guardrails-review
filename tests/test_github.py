@@ -171,7 +171,9 @@ def test_post_review_approve(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("subprocess.run", mock_run)
 
     result_obj = ReviewResult(verdict="approve", summary="LGTM")
-    success = post_review(pr=1, result=result_obj, owner="org", repo="repo", commit_sha="abc123")
+    success = post_review(
+        pr=1, result=result_obj, owner="org", repo="repo", commit_sha="abc123"
+    )
 
     assert success is True
     body = json.loads(captured_stdin[0])
@@ -192,7 +194,9 @@ def test_post_review_request_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("subprocess.run", mock_run)
 
     result_obj = ReviewResult(verdict="request_changes", summary="Fix issues")
-    success = post_review(pr=2, result=result_obj, owner="org", repo="repo", commit_sha="def456")
+    success = post_review(
+        pr=2, result=result_obj, owner="org", repo="repo", commit_sha="def456"
+    )
 
     assert success is True
     body = json.loads(captured_stdin[0])
@@ -220,7 +224,9 @@ def test_post_review_with_comments(monkeypatch: pytest.MonkeyPatch) -> None:
             start_line=15,
         ),
     ]
-    result_obj = ReviewResult(verdict="request_changes", summary="Issues found", comments=comments)
+    result_obj = ReviewResult(
+        verdict="request_changes", summary="Issues found", comments=comments
+    )
     post_review(pr=3, result=result_obj, owner="org", repo="repo", commit_sha="ghi789")
 
     body = json.loads(captured_stdin[0])
@@ -340,7 +346,7 @@ def test_request_changes_pr(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_graphql_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    """graphql returns parsed JSON from gh api graphql."""
+    """Graphql returns parsed JSON from gh api graphql."""
     response = {"data": {"repository": {"name": "test"}}}
 
     def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -355,7 +361,7 @@ def test_graphql_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_graphql_with_variables(monkeypatch: pytest.MonkeyPatch) -> None:
-    """graphql passes variables via -f and -F flags."""
+    """Graphql passes variables via -f and -F flags."""
     captured_args: list[list[str]] = []
 
     def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -380,7 +386,9 @@ def test_graphql_with_variables(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_resolve_thread_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_thread calls GraphQL mutation and returns True."""
-    response = {"data": {"resolveReviewThread": {"thread": {"id": "t1", "isResolved": True}}}}
+    response = {
+        "data": {"resolveReviewThread": {"thread": {"id": "t1", "isResolved": True}}}
+    }
 
     def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         return _make_completed_process(stdout=json.dumps(response))
@@ -413,7 +421,12 @@ def test_get_deleted_files_returns_removed(monkeypatch: pytest.MonkeyPatch) -> N
     pr_files = {
         "files": [
             {"path": "a.py", "additions": 10, "deletions": 0},
-            {"path": "deleted.py", "additions": 0, "deletions": 20, "status": "removed"},
+            {
+                "path": "deleted.py",
+                "additions": 0,
+                "deletions": 20,
+                "status": "removed",
+            },
             {"path": "renamed.py", "additions": 5, "deletions": 5, "status": "renamed"},
         ]
     }

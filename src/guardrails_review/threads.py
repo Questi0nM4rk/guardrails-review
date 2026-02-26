@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from guardrails_review.github import graphql
 from guardrails_review.types import (
     REVIEW_MARKER,
-    ReviewComment,
     ReviewThread,
     ThreadResolution,
 )
+
+if TYPE_CHECKING:
+    from guardrails_review.types import ReviewComment
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +138,9 @@ def find_resolvable_threads(
 
         if t.path in deleted_files:
             resolutions.append(
-                ThreadResolution(thread_id=t.thread_id, resolved=True, reason="File removed")
+                ThreadResolution(
+                    thread_id=t.thread_id, resolved=True, reason="File removed"
+                )
             )
         elif t.is_outdated:
             resolutions.append(
