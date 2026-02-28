@@ -10,7 +10,13 @@ readme = "README.md"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov>=4.0", "ruff>=0.4", "mutmut>=3.0"]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=4.0",
+  "ruff>=0.4",
+  "mutmut>=3.0",
+  "pyright>=1.1",
+]
 
 [project.scripts]
 guardrails-review = "guardrails_review.cli:main"

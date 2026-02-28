@@ -37,9 +37,11 @@ jobs:
       - name: Install pre-commit
         run: uv tool install pre-commit
 
-      # Skip format-and-stage (local-only) and semgrep (run separately for parallelism)
+      # Skip local-only hooks (need .ai-guardrails/ scripts) and semgrep (run separately)
       - name: Run pre-commit checks
-        run: SKIP=format-and-stage,semgrep pre-commit run --all-files
+        run: >-
+          SKIP=format-and-stage,semgrep,detect-suppression-comments,validate-generated-configs,detect-config-ignore-edits
+          pre-commit run --all-files
 
       - name: Run semgrep (parallel)
         run: |
