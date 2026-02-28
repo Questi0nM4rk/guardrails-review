@@ -1,0 +1,18 @@
+name: Guardrails Review
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Questi0nM4rk/guardrails-review@main
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          openrouter-key: ${{ secrets.OPENROUTER_KEY }}

@@ -9,3 +9,4 @@ build/
 uv.lock
 .ai-guardrails/
 mutants/
+*.bak

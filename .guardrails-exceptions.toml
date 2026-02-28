@@ -1,0 +1,50 @@
+# =============================================================================
+# .guardrails-exceptions.toml - Unified Exception Registry
+# =============================================================================
+# SINGLE SOURCE OF TRUTH for all lint/type/analysis exceptions in this project.
+#
+# DO NOT MODIFY unless you are the project owner.
+# AI agents MUST NOT edit this file. Ask the project owner to add exceptions.
+#
+# Regenerate tool configs: ai-guardrails-generate
+# =============================================================================
+
+schema_version = 1
+
+[global.ruff]
+# Formatter conflicts (always needed when using ruff format)
+"W191" = "formatter-conflict: tab-indentation"
+"E111" = "formatter-conflict: indentation-with-invalid-multiple"
+"E114" = "formatter-conflict: indentation-with-invalid-multiple-comment"
+"E117" = "formatter-conflict: over-indented"
+"D206" = "formatter-conflict: indent-with-spaces"
+"D300" = "formatter-conflict: triple-single-quotes"
+"Q000" = "formatter-conflict: bad-quotes-inline-string"
+"Q001" = "formatter-conflict: bad-quotes-multiline-string"
+"Q002" = "formatter-conflict: bad-quotes-docstring"
+"Q003" = "formatter-conflict: avoidable-escaped-quote"
+"COM812" = "formatter-conflict: missing-trailing-comma"
+"COM819" = "formatter-conflict: prohibited-trailing-comma"
+"ISC001" = "formatter-conflict: single-line-implicit-string-concatenation"
+"ISC002" = "formatter-conflict: multi-line-implicit-string-concatenation"
+
+[global.codespell]
+skip = [".git", "*.lock", "*.baseline", "node_modules", "venv", ".venv"]
+ignore_words = []
+
+# --- Examples ---
+#
+# [[file_exceptions]]
+# glob = "tests/**/*.py"
+# tool = "ruff"
+# rules = ["S101", "ARG001"]
+# reason = "Test files need asserts and fixtures"
+# expires = 2026-06-01  # optional: auto-flagged when expired
+#
+# [[inline_suppressions]]
+# pattern = "noqa: BLE001"
+# glob = "**/tools/*.py"
+# reason = "MCP tool boundaries"
+#
+# [skip]
+# semgrep = ["tests/"]
