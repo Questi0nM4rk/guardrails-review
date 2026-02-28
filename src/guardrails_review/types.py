@@ -25,7 +25,7 @@ class ReviewConfig:
     extra_instructions: str = ""
     max_diff_chars: int = 120_000
     agentic: bool = True
-    max_iterations: int = 5
+    max_iterations: int = 30
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,7 @@ class LLMResponse:
     content: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: str = "stop"
+    usage: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -90,3 +91,37 @@ class ThreadResolution:
     thread_id: str
     resolved: bool
     reason: str
+
+
+@dataclass
+class TokenBudget:
+    """Track token usage across agentic loop iterations.
+
+    ``last_prompt_tokens`` is the current context size (from the most recent
+    request).  ``total_completion_tokens`` is cumulative across all iterations
+    (for cost tracking).
+    """
+
+    max_tokens: int
+    reserve_tokens: int = 0
+    last_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+
+    @property
+    def remaining(self) -> int:
+        """Tokens remaining before hitting the budget ceiling."""
+        return self.max_tokens - self.last_prompt_tokens
+
+    def record(self, usage: dict[str, int] | None) -> None:
+        """Update budget from an OpenRouter usage dict."""
+        if usage:
+            self.last_prompt_tokens = usage.get("prompt_tokens", 0)
+            self.total_completion_tokens += usage.get("completion_tokens", 0)
+
+    def can_continue(self, estimated_next: int = 20_000) -> bool:
+        """Return True if there is room for another iteration."""
+        return self.remaining > estimated_next + self.reserve_tokens
+
+    def at_threshold(self, pct: float) -> bool:
+        """Return True if prompt usage has reached *pct* of max_tokens."""
+        return self.last_prompt_tokens >= self.max_tokens * pct

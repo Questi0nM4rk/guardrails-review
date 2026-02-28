@@ -130,6 +130,9 @@ raises-require-match-for = [
 
 [lint.per-file-ignores]
 "tests/**/*.py" = ["ARG001", "ARG002", "PLR2004"]
+"src/guardrails_review/models.py" = ["S310"]
+"src/guardrails_review/llm.py" = ["S310"]
+"src/guardrails_review/github.py" = ["S603", "S607"]
 "__init__.py" = ["F401"]
 
 [format]

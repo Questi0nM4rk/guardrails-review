@@ -7,7 +7,7 @@ model = "minimax/minimax-m2.5"
 [review]
 # max_diff_chars = 120000
 agentic = true
-max_iterations = 15
+max_iterations = 30
 
 extra_instructions = """
 Focus areas:

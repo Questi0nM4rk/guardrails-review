@@ -18,14 +18,17 @@ def _make_response(
     content: str | None,
     tool_calls: list[Any] | None = None,
     finish_reason: str = "stop",
+    usage: dict[str, int] | None = None,
 ) -> io.BytesIO:
     """Build a fake HTTP response body matching OpenRouter's format."""
     message: dict[str, Any] = {"content": content}
     if tool_calls is not None:
         message["tool_calls"] = tool_calls
-    payload = {
+    payload: dict[str, Any] = {
         "choices": [{"message": message, "finish_reason": finish_reason}],
     }
+    if usage is not None:
+        payload["usage"] = usage
     return io.BytesIO(json.dumps(payload).encode())
 
 
@@ -292,3 +295,43 @@ def test_tools_disables_json_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     body = json.loads(captured_req[0].data)  # type: ignore[arg-type]
     assert "response_format" not in body
     assert "tools" in body
+
+
+# --- Usage parsing ---
+
+
+def test_call_openrouter_tools_parses_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLMResponse.usage is populated from the OpenRouter response."""
+    monkeypatch.setenv("OPENROUTER_KEY", "sk-test-key")
+
+    usage = {"prompt_tokens": 1234, "completion_tokens": 567}
+    fake_resp = _make_response("review text", usage=usage)
+    monkeypatch.setattr(urllib.request, "urlopen", _stub_urlopen(fake_resp))
+
+    tools = [{"type": "function", "function": {"name": "read_file", "parameters": {}}}]
+    result = call_openrouter_tools(
+        messages=[{"role": "user", "content": "review"}],
+        model="test-model",
+        tools=tools,
+    )
+
+    assert result.usage == {"prompt_tokens": 1234, "completion_tokens": 567}
+
+
+def test_call_openrouter_tools_missing_usage_defaults_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLMResponse.usage defaults to empty dict when no usage in response."""
+    monkeypatch.setenv("OPENROUTER_KEY", "sk-test-key")
+
+    fake_resp = _make_response("review text")  # no usage
+    monkeypatch.setattr(urllib.request, "urlopen", _stub_urlopen(fake_resp))
+
+    tools = [{"type": "function", "function": {"name": "read_file", "parameters": {}}}]
+    result = call_openrouter_tools(
+        messages=[{"role": "user", "content": "review"}],
+        model="test-model",
+        tools=tools,
+    )
+
+    assert result.usage == {}

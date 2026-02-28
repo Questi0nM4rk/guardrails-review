@@ -131,10 +131,14 @@ def _send_request(
         raise
 
     response_data = json.loads(resp.read().decode())
-    return _parse_response(response_data)
+    usage: dict[str, int] = response_data.get("usage", {})
+    return _parse_response(response_data, usage)
 
 
-def _parse_response(response_data: dict[str, Any]) -> LLMResponse:
+def _parse_response(
+    response_data: dict[str, Any],
+    usage: dict[str, int] | None = None,
+) -> LLMResponse:
     """Parse OpenRouter response JSON into an LLMResponse."""
     choice = response_data["choices"][0]
     message = choice["message"]
@@ -156,4 +160,5 @@ def _parse_response(response_data: dict[str, Any]) -> LLMResponse:
         content=content,
         tool_calls=tool_calls,
         finish_reason=finish_reason,
+        usage=usage or {},
     )

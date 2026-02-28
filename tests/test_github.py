@@ -15,6 +15,7 @@ from guardrails_review.github import (
     get_pr_metadata,
     get_repo_info,
     graphql,
+    post_inline_comments,
     post_review,
     request_changes,
     resolve_thread,
@@ -452,3 +453,90 @@ def test_get_deleted_files_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     result = get_deleted_files(42)
 
     assert result == set()
+
+
+# --- post_inline_comments ---
+
+
+def test_post_inline_comments_sends_comment_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """post_inline_comments sends a COMMENT review with inline comments."""
+    captured_stdin: list[str] = []
+
+    def mock_run(_args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if kwargs.get("input"):
+            captured_stdin.append(kwargs["input"])
+        return _make_completed_process(stdout="{}")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    comments = [
+        ReviewComment(path="src/foo.py", line=10, body="Bug here", severity="error"),
+        ReviewComment(
+            path="src/bar.py",
+            line=20,
+            body="Multi-line",
+            severity="error",
+            start_line=15,
+        ),
+    ]
+
+    success = post_inline_comments(
+        pr=42,
+        comments=comments,
+        owner="org",
+        repo="repo",
+        commit_sha="abc123",
+    )
+
+    assert success is True
+    body = json.loads(captured_stdin[0])
+    assert body["event"] == "COMMENT"
+    assert body["body"] == ""
+    assert body["commit_id"] == "abc123"
+    assert len(body["comments"]) == 2
+    assert body["comments"][0]["path"] == "src/foo.py"
+    assert body["comments"][0]["side"] == "RIGHT"
+    assert body["comments"][1]["start_line"] == 15
+
+
+def test_post_inline_comments_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """post_inline_comments returns True with no API call when comments is empty."""
+    call_count = {"n": 0}
+
+    def mock_run(_args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        call_count["n"] += 1
+        return _make_completed_process(stdout="{}")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    success = post_inline_comments(
+        pr=42, comments=[], owner="org", repo="repo", commit_sha="abc"
+    )
+
+    assert success is True
+    assert call_count["n"] == 0
+
+
+def test_post_inline_comments_failure_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """post_inline_comments returns False on API failure."""
+
+    def mock_run(_args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _make_completed_process(returncode=1, stderr="permission denied")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    comments = [
+        ReviewComment(path="f.py", line=1, body="Bug", severity="error"),
+    ]
+
+    success = post_inline_comments(
+        pr=42, comments=comments, owner="org", repo="repo", commit_sha="abc"
+    )
+
+    assert success is False

@@ -53,7 +53,7 @@ model = "openai/gpt-4o"
     assert result.extra_instructions == ""
     assert result.max_diff_chars == 120_000
     assert result.agentic is True
-    assert result.max_iterations == 15
+    assert result.max_iterations == 30
 
 
 def test_load_config_missing_file(tmp_path: Path) -> None:
@@ -111,7 +111,7 @@ def test_load_config_agentic_defaults(tmp_path: Path) -> None:
     result = load_config(tmp_path)
 
     assert result.agentic is True
-    assert result.max_iterations == 15
+    assert result.max_iterations == 30
 
 
 def test_load_config_ignores_removed_fields(tmp_path: Path) -> None:

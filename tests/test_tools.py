@@ -249,10 +249,16 @@ def test_execute_tool_unknown_raises(ctx):
         execute_tool("bogus", "{}", ctx)
 
 
-def test_execute_tool_submit_review_not_dispatched(ctx):
-    """submit_review is handled by the loop, not execute_tool."""
-    with pytest.raises(ValueError, match="Unknown tool: submit_review"):
-        execute_tool("submit_review", "{}", ctx)
+def test_execute_tool_post_comments_not_dispatched(ctx):
+    """post_comments is handled by the agentic loop, not execute_tool."""
+    with pytest.raises(ValueError, match="Unknown tool: post_comments"):
+        execute_tool("post_comments", "{}", ctx)
+
+
+def test_execute_tool_finish_review_not_dispatched(ctx):
+    """finish_review is handled by the agentic loop, not execute_tool."""
+    with pytest.raises(ValueError, match="Unknown tool: finish_review"):
+        execute_tool("finish_review", "{}", ctx)
 
 
 # --- Tool definitions ---
@@ -260,25 +266,36 @@ def test_execute_tool_submit_review_not_dispatched(ctx):
 
 def test_tool_definitions_have_required_structure():
     """All tool definitions have the expected OpenRouter format."""
-    assert len(TOOL_DEFINITIONS) == 4
+    assert len(TOOL_DEFINITIONS) == 5
     names = {t["function"]["name"] for t in TOOL_DEFINITIONS}
-    assert names == {"read_file", "list_changed_files", "search_code", "submit_review"}
+    assert names == {
+        "read_file",
+        "list_changed_files",
+        "search_code",
+        "post_comments",
+        "finish_review",
+    }
     for tool in TOOL_DEFINITIONS:
         assert tool["type"] == "function"
         assert "description" in tool["function"]
         assert "parameters" in tool["function"]
 
 
-def test_submit_review_schema_has_no_severity():
-    """submit_review tool schema should not include severity field."""
-    submit_tool = next(
-        t for t in TOOL_DEFINITIONS if t["function"]["name"] == "submit_review"
-    )
-    comment_props = submit_tool["function"]["parameters"]["properties"]["comments"][
-        "items"
-    ]["properties"]
-    assert "severity" not in comment_props
-    required = submit_tool["function"]["parameters"]["properties"]["comments"]["items"][
-        "required"
-    ]
-    assert "severity" not in required
+def test_post_comments_schema_has_comments_array():
+    """post_comments tool schema accepts a comments array with path, line, body."""
+    tool = next(t for t in TOOL_DEFINITIONS if t["function"]["name"] == "post_comments")
+    params = tool["function"]["parameters"]
+    assert "comments" in params["properties"]
+    items = params["properties"]["comments"]["items"]
+    assert "path" in items["properties"]
+    assert "line" in items["properties"]
+    assert "body" in items["properties"]
+    assert params["required"] == ["comments"]
+
+
+def test_finish_review_schema_has_no_parameters():
+    """finish_review tool has no required parameters."""
+    tool = next(t for t in TOOL_DEFINITIONS if t["function"]["name"] == "finish_review")
+    params = tool["function"]["parameters"]
+    assert params.get("properties", {}) == {}
+    assert params.get("required", []) == []

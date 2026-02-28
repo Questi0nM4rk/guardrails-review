@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -13,13 +15,19 @@ from guardrails_review.github import (
     get_pr_diff,
     get_pr_metadata,
     get_repo_info,
+    post_inline_comments,
     post_review,
     resolve_thread,
     set_commit_status,
 )
 from guardrails_review.llm import call_openrouter, call_openrouter_tools
-from guardrails_review.parser import parse_response, parse_submit_review_args
-from guardrails_review.prompts import build_agentic_messages, build_messages
+from guardrails_review.models import get_model_context_length
+from guardrails_review.parser import parse_response
+from guardrails_review.prompts import (
+    build_agentic_messages,
+    build_ci_context,
+    build_messages,
+)
 from guardrails_review.threads import (
     deduplicate_comments,
     find_resolvable_threads,
@@ -27,7 +35,12 @@ from guardrails_review.threads import (
     get_review_threads,
 )
 from guardrails_review.tools import TOOL_DEFINITIONS, ToolContext, execute_tool
-from guardrails_review.types import ReviewResult
+from guardrails_review.types import (
+    REVIEW_MARKER,
+    ReviewComment,
+    ReviewResult,
+    TokenBudget,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,12 +48,14 @@ if TYPE_CHECKING:
     from guardrails_review.types import (
         LLMResponse,
         PRMetadata,
-        ReviewComment,
         ReviewConfig,
         ReviewThread,
+        ToolCall,
     )
 
 logger = logging.getLogger(__name__)
+
+_NO_PROGRESS_LIMIT = 2
 
 
 def validate_comments(
@@ -305,54 +320,221 @@ def _run_oneshot_review(
     return parse_response(raw_response, config.model, pr)
 
 
-def _process_tool_calls(
-    response: LLMResponse,
-    messages: list[dict[str, Any]],
+def _validate_and_post(
+    raw_arguments: str,
+    valid_lines: dict[str, set[int]],
+    existing_threads: list[ReviewThread],
+    all_posted: list[ReviewComment],
     tool_ctx: ToolContext,
-    iteration: int,
-    model_and_pr: tuple[str, int],
-) -> ReviewResult | None:
-    """Process tool calls from an agentic LLM response.
-
-    Appends the assistant message and tool results to ``messages``.
+) -> tuple[list[ReviewComment], str]:
+    """Validate, deduplicate, and post a batch of inline comments.
 
     Args:
-        model_and_pr: Tuple of (model name, PR number).
+        raw_arguments: JSON string with ``comments`` array from the LLM.
+        valid_lines: Mapping of file path to set of valid diff line numbers.
+        existing_threads: Existing review threads for deduplication.
+        all_posted: Comments already posted this session.
+        tool_ctx: GitHub context (pr, owner, repo, commit_sha).
 
     Returns:
-        A ReviewResult if submit_review was called, otherwise None.
+        Tuple of (newly posted comments, tool result message for LLM).
     """
-    model, pr = model_and_pr
-    assistant_msg: dict[str, Any] = {
-        "role": "assistant",
-        "content": response.content,
-        "tool_calls": [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {"name": tc.name, "arguments": tc.arguments},
-            }
-            for tc in response.tool_calls
-        ],
-    }
-    messages.append(assistant_msg)
+    args = json.loads(raw_arguments)
+    raw_comments = args.get("comments", [])
 
-    for tc in response.tool_calls:
-        if tc.name == "submit_review":
-            iter_num = iteration + 1
-            print(f"[agentic] submit_review at iteration {iter_num}")
-            return parse_submit_review_args(tc.arguments, model, pr)
+    # Build ReviewComment objects with the marker
+    candidates: list[ReviewComment] = []
+    for c in raw_comments:
+        path = c.get("path", "")
+        line = c.get("line", 0)
+        body = c.get("body", "")
+        if not path or not line:
+            continue
+        if REVIEW_MARKER not in body:
+            body = f"{REVIEW_MARKER}\n{body}"
+        candidates.append(
+            ReviewComment(
+                path=path,
+                line=line,
+                body=body,
+                severity="error",
+                start_line=c.get("start_line"),
+            )
+        )
 
-        print(f"[agentic] tool: {tc.name}({tc.arguments[:100]}...)")
-        tool_result = execute_tool(tc.name, tc.arguments, tool_ctx)
-        messages.append(
+    # Validate against diff lines
+    valid, invalid = validate_comments(candidates, valid_lines)
+
+    # Deduplicate against existing threads + already-posted
+    already_posted_set = {(c.path, c.line) for c in all_posted}
+    existing_set = {(t.path, t.line) for t in existing_threads if not t.is_resolved}
+    deduped = [
+        c
+        for c in valid
+        if (c.path, c.line) not in already_posted_set
+        and (c.path, c.line) not in existing_set
+    ]
+
+    if deduped:
+        post_inline_comments(
+            tool_ctx.pr, deduped, tool_ctx.owner, tool_ctx.repo, tool_ctx.commit_sha
+        )
+
+    # Build feedback message for the LLM
+    parts = [f"Posted {len(deduped)} comment(s)."]
+    if invalid:
+        dropped = [f"{c.path}:{c.line}" for c in invalid]
+        parts.append(f"Dropped {len(invalid)} comment(s) on invalid lines: {dropped}")
+    if len(valid) - len(deduped) > 0:
+        parts.append(f"Skipped {len(valid) - len(deduped)} duplicate(s).")
+    return deduped, " ".join(parts)
+
+
+@dataclass
+class _AgenticState:
+    """Mutable state for the agentic review loop."""
+
+    messages: list[dict[str, Any]]
+    valid_lines: dict[str, set[int]]
+    existing_threads: list[ReviewThread]
+    all_posted: list[ReviewComment]
+    tool_ctx: ToolContext
+    budget: TokenBudget
+    no_progress_streak: int = 0
+    budget_warning_sent: bool = False
+
+
+def _dispatch_tool_call(
+    tc: ToolCall,
+    state: _AgenticState,
+    iteration: int,
+) -> bool:
+    """Dispatch a single tool call and append tool result to messages.
+
+    Returns True if ``finish_review`` was requested.
+    """
+    if tc.name == "finish_review":
+        print(f"[agentic] finish_review at iteration {iteration + 1}")
+        state.messages.append(
+            {"role": "tool", "tool_call_id": tc.id, "content": "Review complete."}
+        )
+        return True
+
+    if tc.name == "post_comments":
+        new, feedback = _validate_and_post(
+            tc.arguments,
+            state.valid_lines,
+            state.existing_threads,
+            state.all_posted,
+            state.tool_ctx,
+        )
+        state.all_posted.extend(new)
+        n_total = len(state.all_posted)
+        print(f"[agentic] posted {len(new)} comment(s) (total: {n_total})")
+        state.messages.append(
+            {"role": "tool", "tool_call_id": tc.id, "content": feedback}
+        )
+        return False
+
+    # read_file, search_code, list_changed_files
+    print(f"[agentic] tool: {tc.name}({tc.arguments[:80]}...)")
+    tool_result = execute_tool(tc.name, tc.arguments, state.tool_ctx)
+    state.messages.append(
+        {"role": "tool", "tool_call_id": tc.id, "content": tool_result}
+    )
+    return False
+
+
+def _inject_budget_messages(state: _AgenticState) -> None:
+    """Inject budget status (and optional wrap-up warning) into messages."""
+    budget = state.budget
+    budget_msg = (
+        f"[Budget: {budget.last_prompt_tokens:,} / {budget.max_tokens:,} "
+        f"tokens. Remaining: ~{budget.remaining:,}]"
+    )
+    state.messages.append({"role": "user", "content": budget_msg})
+
+    if budget.at_threshold(0.85) and not state.budget_warning_sent:
+        state.messages.append(
             {
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": tool_result,
+                "role": "user",
+                "content": (
+                    "You are at 85% of your token budget. Wrap up your "
+                    "investigation. Post any remaining findings and call "
+                    "finish_review()."
+                ),
             }
         )
-    return None
+        state.budget_warning_sent = True
+
+
+def _init_agentic_state(
+    config: ReviewConfig,
+    diff: str,
+    pr_meta: PRMetadata,
+    pr: int,
+) -> _AgenticState:
+    """Build the initial agentic loop state (budget, threads, messages)."""
+    owner, repo = get_repo_info()
+    commit_sha = pr_meta.head_ref_oid
+    tool_ctx = ToolContext(pr=pr, owner=owner, repo=repo, commit_sha=commit_sha)
+    valid_lines = parse_diff_hunks(diff)
+
+    ctx_length = get_model_context_length(config.model)
+    budget = TokenBudget(
+        max_tokens=int(ctx_length * 0.80),
+        reserve_tokens=int(ctx_length * 0.15),
+    )
+
+    existing_threads: list[ReviewThread] = []
+    try:
+        all_threads = get_review_threads(pr, owner, repo)
+        existing_threads = get_our_threads(all_threads)
+    except RuntimeError:
+        logger.warning("Failed to fetch threads for dedup (non-fatal)")
+
+    ci_context = build_ci_context(owner, repo, commit_sha)
+    messages: list[dict[str, Any]] = build_agentic_messages(
+        diff, config, pr_meta, ci_context=ci_context
+    )
+
+    return _AgenticState(
+        messages=messages,
+        valid_lines=valid_lines,
+        existing_threads=existing_threads,
+        all_posted=[],
+        tool_ctx=tool_ctx,
+        budget=budget,
+    )
+
+
+def _handle_response(
+    response: LLMResponse,
+    state: _AgenticState,
+    iteration: int,
+) -> bool:
+    """Handle a single LLM response. Returns True if the loop should stop."""
+    state.budget.record(response.usage)
+
+    # Progress tracking
+    if not response.tool_calls and not response.content:
+        state.no_progress_streak += 1
+    else:
+        state.no_progress_streak = 0
+
+    if state.no_progress_streak >= _NO_PROGRESS_LIMIT:
+        print(f"[agentic] no progress for {_NO_PROGRESS_LIMIT} iterations, stopping")
+        return True
+
+    if response.tool_calls:
+        _append_assistant_tool_msg(state.messages, response)
+        for tc in response.tool_calls:
+            if _dispatch_tool_call(tc, state, iteration):
+                return True
+    elif response.content:
+        state.messages.append({"role": "assistant", "content": response.content})
+
+    return False
 
 
 def _run_agentic_review(
@@ -361,76 +543,85 @@ def _run_agentic_review(
     pr_meta: PRMetadata,
     pr: int,
 ) -> ReviewResult:
-    """Run the agentic tool-use review loop.
+    """Run the agentic tool-use review loop with incremental posting.
 
-    The LLM can call tools to gather context before submitting its review.
-    Falls back to oneshot on tool-use API errors.
+    Inline comments are posted to GitHub as they are found.  The returned
+    ``ReviewResult`` has ``comments=[]`` because they are already posted.
+    The caller should post only the summary with the final verdict.
     """
-    owner, repo = get_repo_info()
-    commit_sha = pr_meta.head_ref_oid
-    tool_ctx = ToolContext(pr=pr, owner=owner, repo=repo, commit_sha=commit_sha)
+    state = _init_agentic_state(config, diff, pr_meta, pr)
 
-    messages: list[dict[str, Any]] = build_agentic_messages(diff, config, pr_meta)
-    max_iters = config.max_iterations
+    for iteration in range(config.max_iterations):
+        if not state.budget.can_continue():
+            print(f"[agentic] budget exhausted at iteration {iteration + 1}")
+            break
 
-    for iteration in range(max_iters):
-        remaining = max_iters - iteration - 1
-        print(f"[agentic] iteration {iteration + 1}/{max_iters}")
-
-        # Force submit_review on the last 2 iterations
-        tool_choice: dict[str, Any] | str | None = None
-        if remaining <= 1:
-            tool_choice = {"type": "function", "function": {"name": "submit_review"}}
-
-        # Inject a nudge when running low on iterations
-        nudge_threshold = 3
-        if remaining == nudge_threshold:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "You have 3 iterations remaining. Start wrapping up your "
-                        "investigation and prepare to call submit_review."
-                    ),
-                }
-            )
+        _inject_budget_messages(state)
+        print(f"[agentic] iteration {iteration + 1}/{config.max_iterations}")
 
         try:
             response = call_openrouter_tools(
-                messages,
+                state.messages,
                 config.model,
                 tools=TOOL_DEFINITIONS,
-                tool_choice=tool_choice,
             )
         except RuntimeError:
-            logger.warning("Agentic API call failed, falling back to oneshot review")
-            return _run_oneshot_review(config, diff, pr_meta, pr)
+            logger.warning("Agentic API call failed, returning partial")
+            break
 
-        if response.tool_calls:
-            submit_result = _process_tool_calls(
-                response, messages, tool_ctx, iteration, (config.model, pr)
-            )
-            if submit_result is not None:
-                return submit_result
-            continue
+        if _handle_response(response, state, iteration):
+            break
 
-        # No tool calls -- model returned content directly (fallback parse)
-        if response.content:
-            iter_num = iteration + 1
-            print(f"[agentic] content response at iteration {iter_num}")
-            return parse_response(response.content, config.model, pr)
-
-        # Empty response -- shouldn't happen, but handle gracefully
-        print(f"[agentic] empty response at iteration {iteration + 1}")
-        break
-
-    # Max iterations exhausted — fall back to oneshot review
-    print(f"[agentic] exhausted {max_iters} iterations, falling back to oneshot")
-    logger.warning(
-        "Agentic loop exhausted %d iterations, falling back to oneshot",
-        max_iters,
+    verdict = "request_changes" if state.all_posted else "approve"
+    summary = _build_agentic_summary(state.all_posted, state.budget)
+    return ReviewResult(
+        verdict=verdict,
+        summary=summary,
+        comments=[],
+        model=config.model,
+        pr=pr,
     )
-    return _run_oneshot_review(config, diff, pr_meta, pr)
+
+
+def _append_assistant_tool_msg(
+    messages: list[dict[str, Any]],
+    response: LLMResponse,
+) -> None:
+    """Append the assistant message with tool_calls to the conversation."""
+    assistant_msg: dict[str, Any] = {
+        "role": "assistant",
+        "content": response.content,
+        "tool_calls": [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.name,
+                    "arguments": tc.arguments,
+                },
+            }
+            for tc in response.tool_calls
+        ],
+    }
+    messages.append(assistant_msg)
+
+
+def _build_agentic_summary(
+    all_posted: list[ReviewComment],
+    budget: TokenBudget,
+) -> str:
+    """Build a summary for the final agentic review."""
+    parts = [REVIEW_MARKER]
+    n = len(all_posted)
+    if n > 0:
+        parts.append(f"\n{n} defect(s) found and posted as inline comments.")
+    else:
+        parts.append("\nNo defects found.")
+    parts.append(
+        f"\n\n*Budget: {budget.last_prompt_tokens:,} / "
+        f"{budget.max_tokens:,} tokens used.*"
+    )
+    return "".join(parts)
 
 
 def _compute_verdict(comments: list[ReviewComment]) -> str:

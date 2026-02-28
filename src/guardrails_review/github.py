@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from guardrails_review.types import PRMetadata
 
 if TYPE_CHECKING:
-    from guardrails_review.types import ReviewResult
+    from guardrails_review.types import ReviewComment, ReviewResult
 
 
 def run_gh(
@@ -147,6 +147,67 @@ def post_review(
         "-",
         input_data=json.dumps(payload),
     )
+
+    return True
+
+
+def post_inline_comments(
+    pr: int,
+    comments: list[ReviewComment],
+    owner: str,
+    repo: str,
+    commit_sha: str,
+) -> bool:
+    """Post inline comments as a COMMENT review (no verdict).
+
+    Uses ``event=COMMENT`` with an empty body.  This allows incremental
+    posting during the agentic loop without affecting the final verdict.
+
+    Args:
+        pr: Pull request number.
+        comments: Review comments to post inline.
+        owner: Repository owner.
+        repo: Repository name.
+        commit_sha: The commit SHA to attach comments to.
+
+    Returns:
+        True on success, False on failure.
+    """
+    if not comments:
+        return True
+
+    api_comments: list[dict[str, object]] = []
+    for c in comments:
+        entry: dict[str, object] = {
+            "path": c.path,
+            "line": c.line,
+            "body": c.body,
+            "side": "RIGHT",
+        }
+        if c.start_line is not None:
+            entry["start_line"] = c.start_line
+            entry["start_side"] = "RIGHT"
+        api_comments.append(entry)
+
+    payload = {
+        "event": "COMMENT",
+        "body": "",
+        "commit_id": commit_sha,
+        "comments": api_comments,
+    }
+
+    try:
+        run_gh(
+            "api",
+            f"repos/{owner}/{repo}/pulls/{pr}/reviews",
+            "--method",
+            "POST",
+            "--input",
+            "-",
+            input_data=json.dumps(payload),
+        )
+    except RuntimeError:
+        return False
 
     return True
 

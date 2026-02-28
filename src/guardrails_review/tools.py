@@ -95,26 +95,15 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
         "type": "function",
         "function": {
-            "name": "submit_review",
+            "name": "post_comments",
             "description": (
-                "Submit the final review. This terminates the review loop. "
-                "Call this when you have gathered enough context."
+                "Post inline review comments to the PR immediately. "
+                "Call this as soon as you find defects. Do not accumulate "
+                "findings -- post each batch as you go."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "verdict": {
-                        "type": "string",
-                        "enum": ["approve", "request_changes"],
-                        "description": "Review verdict.",
-                    },
-                    "summary": {
-                        "type": "string",
-                        "description": (
-                            "Review summary (include"
-                            " <!-- guardrails-review --> marker)."
-                        ),
-                    },
                     "comments": {
                         "type": "array",
                         "items": {
@@ -123,14 +112,33 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
                                 "path": {"type": "string"},
                                 "line": {"type": "integer"},
                                 "body": {"type": "string"},
-                                "start_line": {"type": "integer"},
+                                "start_line": {
+                                    "type": "integer",
+                                    "description": (
+                                        "First line of a multi-line comment (optional)."
+                                    ),
+                                },
                             },
                             "required": ["path", "line", "body"],
                         },
-                        "description": "Inline review comments.",
+                        "description": "Inline review comments to post.",
                     },
                 },
-                "required": ["verdict", "summary", "comments"],
+                "required": ["comments"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finish_review",
+            "description": (
+                "Signal that your review is complete. Call this when you "
+                "have no more files to investigate."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
             },
         },
     },
