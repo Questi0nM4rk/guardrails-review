@@ -6,8 +6,8 @@ model = "minimax/minimax-m2.5"
 
 [review]
 # max_diff_chars = 120000
-agentic = true # Enable tool-use loop for context-gathering before review
-# max_iterations = 5    # Max tool-use rounds before forcing review submission
+agentic = true
+max_iterations = 15
 
 extra_instructions = """
 Focus areas:

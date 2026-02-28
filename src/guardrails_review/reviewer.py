@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -28,15 +27,13 @@ from guardrails_review.threads import (
     get_review_threads,
 )
 from guardrails_review.tools import TOOL_DEFINITIONS, ToolContext, execute_tool
-from guardrails_review.types import (
-    REVIEW_MARKER,
-    ReviewResult,
-)
+from guardrails_review.types import ReviewResult
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from guardrails_review.types import (
+        LLMResponse,
         PRMetadata,
         ReviewComment,
         ReviewConfig,
@@ -155,6 +152,104 @@ def _check_unresolved_threads(
     ]
 
 
+def _build_final_result(
+    result: ReviewResult,
+    valid_lines: dict[str, set[int]],
+    pr: int,
+) -> tuple[ReviewResult, list[ReviewComment]]:
+    """Validate comments and build the initial final ReviewResult.
+
+    Returns:
+        Tuple of (final ReviewResult with valid comments only, invalid comments).
+    """
+    valid_comments, invalid_comments = validate_comments(result.comments, valid_lines)
+
+    summary = result.summary
+    if invalid_comments:
+        summary += (
+            "\n\n---\n**Comments on lines outside diff (could not post inline):**\n"
+        )
+        for c in invalid_comments:
+            summary += f"\n- `{c.path}:{c.line}`: {c.body}"
+
+    verdict = _compute_verdict(valid_comments + invalid_comments)
+
+    final = ReviewResult(
+        verdict=verdict,
+        summary=summary,
+        comments=valid_comments,
+        model=result.model,
+        timestamp=result.timestamp,
+        pr=pr,
+    )
+    return final, invalid_comments
+
+
+def _block_approval_if_unresolved(
+    final: ReviewResult,
+    our_existing: list[ReviewThread],
+    auto_resolved_ids: set[str],
+    pr: int,
+) -> ReviewResult:
+    """Block approval if unresolved threads remain from previous rounds."""
+    still_unresolved = _check_unresolved_threads(our_existing, auto_resolved_ids)
+    if final.verdict == "approve" and still_unresolved:
+        n_unresolved = len(still_unresolved)
+        msg = (
+            f"\n\n---\n**{n_unresolved} unresolved thread(s) "
+            f"from previous review rounds remain open.**"
+        )
+        final = ReviewResult(
+            verdict="request_changes",
+            summary=final.summary + msg,
+            comments=final.comments,
+            model=final.model,
+            timestamp=final.timestamp,
+            pr=pr,
+        )
+        logger.info(
+            "Approval blocked: %d unresolved thread(s) from previous rounds",
+            n_unresolved,
+        )
+    return final
+
+
+def _post_and_set_status(
+    pr: int,
+    final: ReviewResult,
+    invalid_comments: list[ReviewComment],
+    repo_info: tuple[str, str, str],
+    project_dir: Path | None,
+) -> int:
+    """Post review to GitHub and set final commit status.
+
+    Args:
+        repo_info: Tuple of (owner, repo, commit_sha).
+
+    Returns 0 on success, 1 on failure.
+    """
+    owner, repo, commit_sha = repo_info
+    try:
+        post_review(pr, final, owner, repo, commit_sha)
+    except RuntimeError as exc:
+        logger.exception("Failed to post review")
+        print(f"Error posting review: {exc}")
+        _try_set_status(owner, repo, commit_sha, "error", "Review post failed")
+        return 1
+
+    save_review(final, project_dir)
+
+    n = len(final.comments) + len(invalid_comments)
+    if final.verdict == "approve":
+        _try_set_status(owner, repo, commit_sha, "success", "Approved")
+    else:
+        desc = f"{n} defect(s) found" if n > 0 else "Unresolved threads remain"
+        _try_set_status(owner, repo, commit_sha, "failure", desc)
+
+    print(f"Review posted for PR #{pr}: {final.verdict}")
+    return 0
+
+
 def run_review(
     pr: int,
     *,
@@ -177,28 +272,7 @@ def run_review(
     else:
         result = _run_oneshot_review(config, diff, pr_meta, pr)
 
-    valid_comments, invalid_comments = validate_comments(result.comments, valid_lines)
-
-    # Append invalid comments to summary body
-    summary = result.summary
-    if invalid_comments:
-        summary += (
-            "\n\n---\n**Comments on lines outside diff (could not post inline):**\n"
-        )
-        for c in invalid_comments:
-            summary += f"\n- `{c.path}:{c.line}`: {c.body}"
-
-    # Determine final verdict: any comments = request_changes, none = approve
-    verdict = _compute_verdict(valid_comments + invalid_comments)
-
-    final = ReviewResult(
-        verdict=verdict,
-        summary=summary,
-        comments=valid_comments,
-        model=result.model,
-        timestamp=result.timestamp,
-        pr=pr,
-    )
+    final, invalid_comments = _build_final_result(result, valid_lines, pr)
 
     owner, repo = get_repo_info()
     commit_sha = pr_meta.head_ref_oid
@@ -206,50 +280,17 @@ def run_review(
     if not dry_run:
         _try_set_status(owner, repo, commit_sha, "pending", "Review in progress")
 
-    # Deduplicate comments against existing threads
     final, our_existing = _try_dedup(pr, final, invalid_comments, owner, repo)
-
-    # Auto-resolve stale threads before posting
     auto_resolved_ids = _try_auto_resolve(pr, our_existing, valid_lines, commit_sha)
-
-    # Check remaining unresolved guardrails-review threads
-    still_unresolved = _check_unresolved_threads(our_existing, auto_resolved_ids)
-    if final.verdict == "approve" and still_unresolved:
-        n_unresolved = len(still_unresolved)
-        msg = (
-            f"\n\n---\n**{n_unresolved} unresolved thread(s) "
-            f"from previous review rounds remain open.**"
-        )
-        final = ReviewResult(
-            verdict="request_changes",
-            summary=final.summary + msg,
-            comments=final.comments,
-            model=final.model,
-            timestamp=final.timestamp,
-            pr=pr,
-        )
-        logger.info(
-            "Approval blocked: %d unresolved thread(s) from previous rounds",
-            n_unresolved,
-        )
+    final = _block_approval_if_unresolved(final, our_existing, auto_resolved_ids, pr)
 
     if dry_run:
         _print_dry_run(final)
         return 0
 
-    post_review(pr, final, owner, repo, commit_sha)
-    save_review(final, project_dir)
-
-    # Set final commit status
-    n = len(final.comments) + len(invalid_comments)
-    if final.verdict == "approve":
-        _try_set_status(owner, repo, commit_sha, "success", "Approved")
-    else:
-        desc = f"{n} defect(s) found" if n > 0 else "Unresolved threads remain"
-        _try_set_status(owner, repo, commit_sha, "failure", desc)
-
-    print(f"Review posted for PR #{pr}: {final.verdict}")
-    return 0
+    return _post_and_set_status(
+        pr, final, invalid_comments, (owner, repo, commit_sha), project_dir
+    )
 
 
 def _run_oneshot_review(
@@ -262,6 +303,56 @@ def _run_oneshot_review(
     messages = build_messages(diff, config, pr_meta)
     raw_response = call_openrouter(messages, config.model)
     return parse_response(raw_response, config.model, pr)
+
+
+def _process_tool_calls(
+    response: LLMResponse,
+    messages: list[dict[str, Any]],
+    tool_ctx: ToolContext,
+    iteration: int,
+    model_and_pr: tuple[str, int],
+) -> ReviewResult | None:
+    """Process tool calls from an agentic LLM response.
+
+    Appends the assistant message and tool results to ``messages``.
+
+    Args:
+        model_and_pr: Tuple of (model name, PR number).
+
+    Returns:
+        A ReviewResult if submit_review was called, otherwise None.
+    """
+    model, pr = model_and_pr
+    assistant_msg: dict[str, Any] = {
+        "role": "assistant",
+        "content": response.content,
+        "tool_calls": [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {"name": tc.name, "arguments": tc.arguments},
+            }
+            for tc in response.tool_calls
+        ],
+    }
+    messages.append(assistant_msg)
+
+    for tc in response.tool_calls:
+        if tc.name == "submit_review":
+            iter_num = iteration + 1
+            print(f"[agentic] submit_review at iteration {iter_num}")
+            return parse_submit_review_args(tc.arguments, model, pr)
+
+        print(f"[agentic] tool: {tc.name}({tc.arguments[:100]}...)")
+        tool_result = execute_tool(tc.name, tc.arguments, tool_ctx)
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": tool_result,
+            }
+        )
+    return None
 
 
 def _run_agentic_review(
@@ -280,12 +371,29 @@ def _run_agentic_review(
     tool_ctx = ToolContext(pr=pr, owner=owner, repo=repo, commit_sha=commit_sha)
 
     messages: list[dict[str, Any]] = build_agentic_messages(diff, config, pr_meta)
+    max_iters = config.max_iterations
 
-    for iteration in range(config.max_iterations):
-        # On the last iteration, force submit_review
+    for iteration in range(max_iters):
+        remaining = max_iters - iteration - 1
+        print(f"[agentic] iteration {iteration + 1}/{max_iters}")
+
+        # Force submit_review on the last 2 iterations
         tool_choice: dict[str, Any] | str | None = None
-        if iteration == config.max_iterations - 1:
+        if remaining <= 1:
             tool_choice = {"type": "function", "function": {"name": "submit_review"}}
+
+        # Inject a nudge when running low on iterations
+        nudge_threshold = 3
+        if remaining == nudge_threshold:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "You have 3 iterations remaining. Start wrapping up your "
+                        "investigation and prepare to call submit_review."
+                    ),
+                }
+            )
 
         try:
             response = call_openrouter_tools(
@@ -298,62 +406,31 @@ def _run_agentic_review(
             logger.warning("Agentic API call failed, falling back to oneshot review")
             return _run_oneshot_review(config, diff, pr_meta, pr)
 
-        # Check for tool calls
         if response.tool_calls:
-            # Append assistant message with tool calls
-            assistant_msg: dict[str, Any] = {
-                "role": "assistant",
-                "content": response.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {"name": tc.name, "arguments": tc.arguments},
-                    }
-                    for tc in response.tool_calls
-                ],
-            }
-            messages.append(assistant_msg)
-
-            for tc in response.tool_calls:
-                if tc.name == "submit_review":
-                    return parse_submit_review_args(tc.arguments, config.model, pr)
-
-                # Execute tool and append result
-                tool_result = execute_tool(tc.name, tc.arguments, tool_ctx)
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": tool_result,
-                    }
-                )
+            submit_result = _process_tool_calls(
+                response, messages, tool_ctx, iteration, (config.model, pr)
+            )
+            if submit_result is not None:
+                return submit_result
             continue
 
         # No tool calls -- model returned content directly (fallback parse)
         if response.content:
+            iter_num = iteration + 1
+            print(f"[agentic] content response at iteration {iter_num}")
             return parse_response(response.content, config.model, pr)
 
         # Empty response -- shouldn't happen, but handle gracefully
+        print(f"[agentic] empty response at iteration {iteration + 1}")
         break
 
-    # Max iterations exhausted without submit_review
+    # Max iterations exhausted — fall back to oneshot review
+    print(f"[agentic] exhausted {max_iters} iterations, falling back to oneshot")
     logger.warning(
-        "Agentic loop exhausted %d iterations without conclusion",
-        config.max_iterations,
+        "Agentic loop exhausted %d iterations, falling back to oneshot",
+        max_iters,
     )
-    return ReviewResult(
-        verdict="request_changes",
-        summary=(
-            f"{REVIEW_MARKER}\n"
-            f"Review loop exhausted after {config.max_iterations} "
-            f"iterations without reaching a conclusion."
-        ),
-        comments=[],
-        model=config.model,
-        timestamp=datetime.now(tz=UTC).isoformat(),
-        pr=pr,
-    )
+    return _run_oneshot_review(config, diff, pr_meta, pr)
 
 
 def _compute_verdict(comments: list[ReviewComment]) -> str:
@@ -361,6 +438,28 @@ def _compute_verdict(comments: list[ReviewComment]) -> str:
     if comments:
         return "request_changes"
     return "approve"
+
+
+def _fetch_resolve_context(
+    pr: int,
+) -> tuple[dict[str, set[int]], str, set[str]]:
+    """Fetch diff, metadata, and deleted files for resolve operation.
+
+    Returns:
+        Tuple of (valid_lines, head_sha, deleted_files).
+    """
+    pr_meta = get_pr_metadata(pr)
+    diff = get_pr_diff(pr)
+    valid_lines = parse_diff_hunks(diff)
+    head_sha = pr_meta.head_ref_oid
+
+    try:
+        deleted = get_deleted_files(pr)
+    except RuntimeError:
+        logger.warning("Failed to fetch deleted files, assuming none")
+        deleted = set()
+
+    return valid_lines, head_sha, deleted
 
 
 def run_resolve(
@@ -381,16 +480,7 @@ def run_resolve(
         0 on success, 1 on failure.
     """
     owner, repo = get_repo_info()
-    pr_meta = get_pr_metadata(pr)
-    diff = get_pr_diff(pr)
-    valid_lines = parse_diff_hunks(diff)
-    head_sha = pr_meta.head_ref_oid
-
-    try:
-        deleted = get_deleted_files(pr)
-    except RuntimeError:
-        logger.warning("Failed to fetch deleted files, assuming none")
-        deleted = set()
+    valid_lines, head_sha, deleted = _fetch_resolve_context(pr)
 
     try:
         all_threads = get_review_threads(pr, owner, repo)

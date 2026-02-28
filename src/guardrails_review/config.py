@@ -49,5 +49,5 @@ def load_config(project_dir: Path | None = None) -> ReviewConfig:
         extra_instructions=review_section.get("extra_instructions", ""),
         max_diff_chars=review_section.get("max_diff_chars", 120_000),
         agentic=review_section.get("agentic", True),
-        max_iterations=review_section.get("max_iterations", 5),
+        max_iterations=review_section.get("max_iterations", 15),
     )
