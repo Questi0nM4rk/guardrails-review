@@ -32,19 +32,35 @@ schema_version = 1
 skip = [".git", "*.lock", "*.baseline", "node_modules", "venv", ".venv"]
 ignore_words = []
 
-# --- Examples ---
-#
-# [[file_exceptions]]
-# glob = "tests/**/*.py"
-# tool = "ruff"
-# rules = ["S101", "ARG001"]
-# reason = "Test files need asserts and fixtures"
-# expires = 2026-06-01  # optional: auto-flagged when expired
-#
-# [[inline_suppressions]]
-# pattern = "noqa: BLE001"
-# glob = "**/tools/*.py"
-# reason = "MCP tool boundaries"
-#
+[[file_exceptions]]
+glob = "tests/**/*.py"
+tool = "ruff"
+rules = ["S101", "PLR2004", "ARG001", "ARG002", "ARG005", "SLF001", "D", "ANN"]
+reason = "Tests: asserts, magic values, unused mock args, private access, no docstrings/annotations"
+
+[[file_exceptions]]
+glob = "src/guardrails_review/models.py"
+tool = "ruff"
+rules = ["S310"]
+reason = "stdlib urllib to hardcoded OpenRouter API constant"
+
+[[file_exceptions]]
+glob = "src/guardrails_review/llm.py"
+tool = "ruff"
+rules = ["S310"]
+reason = "stdlib urllib to hardcoded OpenRouter API constant"
+
+[[file_exceptions]]
+glob = "src/guardrails_review/github.py"
+tool = "ruff"
+rules = ["S603", "S607"]
+reason = "subprocess.run with hardcoded 'gh' binary — never user input"
+
+[[file_exceptions]]
+glob = "src/guardrails_review/diff.py"
+tool = "ruff"
+rules = ["PLR0911"]
+reason = "Diff parser: early-return is idiomatic for state machines"
+
 # [skip]
 # semgrep = ["tests/"]
