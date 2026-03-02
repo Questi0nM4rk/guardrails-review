@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 
+from guardrails_review.memory import FalsePositive, Memory, ResolutionStats
 from guardrails_review.parser import parse_response, parse_submit_review_args
 from guardrails_review.prompts import build_agentic_messages, build_messages
 from guardrails_review.reviewer import (
@@ -205,6 +206,53 @@ def test_validate_comments_splits_correctly():
     assert len(valid) == 1
     assert valid[0].line == 10
     assert len(invalid) == 2
+
+
+def test_validate_comments_multiline_both_lines_valid():
+    """Multi-line comment with both start_line and line in diff is valid."""
+    valid_lines = {"foo.py": {5, 6, 7, 8, 9, 10}}
+    comments = [
+        ReviewComment(path="foo.py", line=10, body="range", severity="error", start_line=5),
+    ]
+    valid, invalid = validate_comments(comments, valid_lines)
+
+    assert len(valid) == 1
+    assert len(invalid) == 0
+
+
+def test_validate_comments_multiline_start_line_outside_diff_is_invalid():
+    """Multi-line comment where start_line is outside diff is invalid."""
+    valid_lines = {"foo.py": {8, 9, 10}}  # lines 1-7 not in diff
+    comments = [
+        ReviewComment(path="foo.py", line=10, body="range", severity="error", start_line=5),
+    ]
+    valid, invalid = validate_comments(comments, valid_lines)
+
+    assert len(valid) == 0
+    assert len(invalid) == 1
+
+
+def test_validate_comments_multiline_end_line_outside_diff_is_invalid():
+    """Multi-line comment where end line (line) is outside diff is invalid."""
+    valid_lines = {"foo.py": {5, 6, 7}}  # lines 8-10 not in diff
+    comments = [
+        ReviewComment(path="foo.py", line=10, body="range", severity="error", start_line=5),
+    ]
+    valid, invalid = validate_comments(comments, valid_lines)
+
+    assert len(valid) == 0
+    assert len(invalid) == 1
+
+
+def test_validate_comments_no_start_line_behaves_as_before():
+    """Comments without start_line use only line for validation (unchanged behavior)."""
+    valid_lines = {"foo.py": {10}}
+    comments = [
+        ReviewComment(path="foo.py", line=10, body="single", severity="error"),
+    ]
+    valid, _invalid = validate_comments(comments, valid_lines)
+
+    assert len(valid) == 1
 
 
 def test_compute_verdict_comments_request_changes():
@@ -1195,3 +1243,111 @@ def test_run_review_unresolved_threads_set_failure_status(tmp_path, monkeypatch)
     final_statuses = [s for s in captured["set_statuses"] if s[0] != "pending"]
     assert len(final_statuses) == 1
     assert final_statuses[0][0] == "failure"
+
+
+def test_run_review_loads_and_saves_memory(tmp_path, monkeypatch):
+    """run_review loads memory before review and saves it after posting."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
+
+    diff_text = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n+++ b/foo.py\n"
+        "@@ -1,1 +1,2 @@\n context\n+added\n"
+    )
+    pr_meta = _meta(head_ref_oid="sha1")
+    llm_response = json.dumps(
+        {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
+    )
+
+    fake_mem = Memory(
+        version=1,
+        repo="owner/repo",
+        false_positives=[],
+        conventions=["Uses gh CLI"],
+        resolution_stats=ResolutionStats(
+            total_threads=0, fixed=0, false_positive=0, wont_fix=0, avg_rounds_to_resolve=0.0
+        ),
+    )
+    saved_memories = []
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.post_review", lambda *a, **kw: True)
+    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
+    monkeypatch.setattr(f"{_REVIEWER}.load_memory", lambda owner, repo: fake_mem)
+
+    def _capture_save(mem):
+        saved_memories.append(mem)
+
+    monkeypatch.setattr(f"{_REVIEWER}.save_memory", _capture_save)
+
+    result = run_review(42, project_dir=tmp_path)
+
+    assert result == 0
+    assert len(saved_memories) == 1
+    assert saved_memories[0].repo == "owner/repo"
+
+
+def test_run_review_memory_context_injected_into_prompt(tmp_path, monkeypatch):
+    """Memory context is injected into LLM prompt when false positives exist."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
+
+    diff_text = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n+++ b/foo.py\n"
+        "@@ -1,1 +1,2 @@\n context\n+added\n"
+    )
+    pr_meta = _meta(head_ref_oid="sha1")
+    llm_response = json.dumps(
+        {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
+    )
+
+    fake_mem = Memory(
+        version=1,
+        repo="owner/repo",
+        false_positives=[
+            FalsePositive(
+                pattern="urllib for API",
+                rule="S605",
+                file_pattern="src/**/*.py",
+                occurrences=3,
+                first_seen="2026-01-01",
+                last_seen="2026-03-01",
+            )
+        ],
+        conventions=[],
+        resolution_stats=ResolutionStats(
+            total_threads=0, fixed=0, false_positive=0, wont_fix=0, avg_rounds_to_resolve=0.0
+        ),
+    )
+    captured_messages = []
+
+    def fake_openrouter(msgs, model):
+        captured_messages.extend(msgs)
+        return llm_response
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", fake_openrouter)
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.post_review", lambda *a, **kw: True)
+    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
+    monkeypatch.setattr(f"{_REVIEWER}.load_memory", lambda owner, repo: fake_mem)
+    monkeypatch.setattr(f"{_REVIEWER}.save_memory", lambda mem: None)
+
+    run_review(42, project_dir=tmp_path)
+
+    # The user message should contain the false positive pattern
+    user_msg = next(m for m in captured_messages if m["role"] == "user")
+    assert "urllib for API" in user_msg["content"]
+    assert "S605" in user_msg["content"]

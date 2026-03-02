@@ -16,7 +16,8 @@ You are a pedantic defect detector. Review the PR diff and return ONLY valid JSO
   "comments": [
     {
       "path": "relative/file/path",
-      "line": <line number in new file>,
+      "line": <end line number in new file>,
+      "start_line": <start line for multi-line comments, optional>,
       "body": "description of the defect"
     }
   ]
@@ -79,6 +80,7 @@ def _build_user_content(
     diff: str,
     config: ReviewConfig,
     pr_meta: PRMetadata,
+    memory_context: str = "",
 ) -> str:
     """Build the user message content shared by oneshot and agentic modes."""
     parts = [
@@ -96,6 +98,12 @@ def _build_user_content(
             "",
             *parts,
         ]
+    if memory_context:
+        parts = [
+            f"## Project Memory\n\n{memory_context}",
+            "",
+            *parts,
+        ]
     return "\n".join(parts)
 
 
@@ -103,11 +111,15 @@ def build_messages(
     diff: str,
     config: ReviewConfig,
     pr_meta: PRMetadata,
+    memory_context: str = "",
 ) -> list[dict[str, str]]:
     """Build the message list for the LLM call."""
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": _build_user_content(diff, config, pr_meta)},
+        {
+            "role": "user",
+            "content": _build_user_content(diff, config, pr_meta, memory_context),
+        },
     ]
 
 
@@ -115,9 +127,13 @@ def build_agentic_messages(
     diff: str,
     config: ReviewConfig,
     pr_meta: PRMetadata,
+    memory_context: str = "",
 ) -> list[dict[str, Any]]:
     """Build the message list for the agentic tool-use review loop."""
     return [
         {"role": "system", "content": _AGENTIC_SYSTEM_PROMPT},
-        {"role": "user", "content": _build_user_content(diff, config, pr_meta)},
+        {
+            "role": "user",
+            "content": _build_user_content(diff, config, pr_meta, memory_context),
+        },
     ]

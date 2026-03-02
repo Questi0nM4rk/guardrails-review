@@ -19,6 +19,12 @@ from guardrails_review.github import (
     set_commit_status,
 )
 from guardrails_review.llm import call_openrouter, call_openrouter_tools
+from guardrails_review.memory import (
+    build_memory_context,
+    load_memory,
+    save_memory,
+    update_from_review,
+)
 from guardrails_review.parser import parse_response, parse_submit_review_args
 from guardrails_review.prompts import build_agentic_messages, build_messages
 from guardrails_review.threads import (
@@ -56,7 +62,9 @@ def validate_comments(
     invalid: list[ReviewComment] = []
     for c in comments:
         file_lines = valid_lines.get(c.path, set())
-        if c.line in file_lines:
+        end_line_ok = c.line in file_lines
+        start_line_ok = c.start_line is None or c.start_line in file_lines
+        if end_line_ok and start_line_ok:
             valid.append(c)
         else:
             invalid.append(c)
@@ -161,10 +169,14 @@ def run_review(
     pr_meta = get_pr_metadata(pr)
     valid_lines = parse_diff_hunks(diff)
 
+    owner, repo = get_repo_info()
+    memory = load_memory(owner, repo)
+    memory_context = build_memory_context(memory)
+
     if config.agentic:
-        result = _run_agentic_review(config, diff, pr_meta, pr)
+        result = _run_agentic_review(config, diff, pr_meta, pr, memory_context=memory_context)
     else:
-        result = _run_oneshot_review(config, diff, pr_meta, pr)
+        result = _run_oneshot_review(config, diff, pr_meta, pr, memory_context=memory_context)
 
     valid_comments, invalid_comments = validate_comments(result.comments, valid_lines)
 
@@ -187,7 +199,6 @@ def run_review(
         pr=pr,
     )
 
-    owner, repo = get_repo_info()
     commit_sha = pr_meta.head_ref_oid
 
     if not dry_run:
@@ -227,6 +238,10 @@ def run_review(
     post_review(pr, final, owner, repo, commit_sha)
     save_review(final, project_dir)
 
+    # Update and persist memory after review
+    updated_memory = update_from_review(memory, final, our_existing)
+    save_memory(updated_memory)
+
     # Set final commit status
     n = len(final.comments) + len(invalid_comments)
     if final.verdict == "approve":
@@ -244,9 +259,10 @@ def _run_oneshot_review(
     diff: str,
     pr_meta: PRMetadata,
     pr: int,
+    memory_context: str = "",
 ) -> ReviewResult:
     """Run the original single-shot review (diff -> LLM JSON -> result)."""
-    messages = build_messages(diff, config, pr_meta)
+    messages = build_messages(diff, config, pr_meta, memory_context=memory_context)
     raw_response = call_openrouter(messages, config.model)
     return parse_response(raw_response, config.model, pr)
 
@@ -256,6 +272,7 @@ def _run_agentic_review(
     diff: str,
     pr_meta: PRMetadata,
     pr: int,
+    memory_context: str = "",
 ) -> ReviewResult:
     """Run the agentic tool-use review loop.
 
@@ -266,7 +283,9 @@ def _run_agentic_review(
     commit_sha = pr_meta.head_ref_oid
     tool_ctx = ToolContext(pr=pr, owner=owner, repo=repo, commit_sha=commit_sha)
 
-    messages: list[dict[str, Any]] = build_agentic_messages(diff, config, pr_meta)
+    messages: list[dict[str, Any]] = build_agentic_messages(
+        diff, config, pr_meta, memory_context=memory_context
+    )
 
     for iteration in range(config.max_iterations):
         # On the last iteration, force submit_review
@@ -283,7 +302,7 @@ def _run_agentic_review(
             )
         except RuntimeError:
             logger.warning("Agentic API call failed, falling back to oneshot review")
-            return _run_oneshot_review(config, diff, pr_meta, pr)
+            return _run_oneshot_review(config, diff, pr_meta, pr, memory_context=memory_context)
 
         # Check for tool calls
         if response.tool_calls:

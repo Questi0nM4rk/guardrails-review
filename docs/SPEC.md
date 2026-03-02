@@ -56,11 +56,15 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+concurrency:
+  group: guardrails-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   review:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write   # required for guardrails-memory branch
       pull-requests: write
       statuses: write
     steps:
@@ -235,7 +239,7 @@ pip-installs the package, and runs `guardrails-review review --pr N`.
 
 ```yaml
 permissions:
-  contents: read
+  contents: write   # read for checkout + write for guardrails-memory branch
   pull-requests: write
   statuses: write
 ```
@@ -491,9 +495,9 @@ approve code with open defect threads.
 
 ### Per-repo memory
 
-**Status:** Not implemented. Planned.
+**Status:** Implemented (branch-based storage).
 
-The bot should learn per-project patterns over time:
+The bot learns per-project patterns over time:
 
 - **False positive patterns.** Track which defect comments get resolved as false
   positives. Suppress similar comments in future reviews.
@@ -502,18 +506,36 @@ The bot should learn per-project patterns over time:
 - **Resolution history.** Track how long threads stay open, which types of
   defects recur, and agent fix rates.
 
-Storage would be a local JSON or TOML file (`.guardrails-review/memory.json`)
-that persists across review rounds and is committed to the repo.
+**Storage:** `memory.json` on the `guardrails-memory` orphan branch of the
+target repository. Uses the GitHub Contents API via `gh api`. Requires only
+`contents: write` — the default `GITHUB_TOKEN` already has this.
+
+**Load:** `GET /repos/{owner}/{repo}/contents/memory.json?ref=guardrails-memory`,
+base64-decode content. Falls back to empty stateless Memory on any failure.
+
+**Save:** `PUT /repos/{owner}/{repo}/contents/memory.json` with base64-encoded
+content and the current file SHA (for updates). Creates the orphan branch on
+first run. Prunes `false_positives` to 50 entries (LRU by `last_seen`) before
+writing. Logs a warning if serialized size exceeds 100 KB.
+
+**Concurrency:** Use `concurrency: group: guardrails-review-${{ github.event.pull_request.number }}`
+in the workflow to serialize runs on the same PR. The branch approach is not
+atomic — concurrent writes can race.
+
+**Required workflow permission:** `contents: write` (replaces the previously
+documented `gists: write`, which is not a valid Actions permission scope).
 
 ### Multi-line comment support
 
-**Status:** Partially implemented.
+**Status:** Implemented.
 
-The `ReviewComment` dataclass has a `start_line` field. The `submit_review` tool
-schema includes `start_line` as an optional parameter. The `post_review` function
-sends `start_line`/`start_side` when present. However, oneshot mode does not
-prompt the LLM for multi-line ranges, and validation does not check `start_line`
-against diff hunks.
+- `ReviewComment` dataclass has a `start_line: int | None` field.
+- `submit_review` tool schema includes `start_line` as an optional parameter.
+- `post_review` sends `start_line`/`start_side: RIGHT` to the GitHub API when present.
+- `validate_comments` checks both `line` and `start_line` (when set) against
+  diff hunks — comments where either falls outside the diff are rejected.
+- Oneshot system prompt includes `start_line` in the JSON schema so the LLM
+  knows to provide it for multi-line defects.
 
 ---
 

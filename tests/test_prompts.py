@@ -105,3 +105,39 @@ def test_build_agentic_messages_uses_agentic_prompt():
     assert len(messages) == 2
     assert "tools" in messages[0]["content"].lower()
     assert "submit_review" in messages[0]["content"]
+
+
+def test_build_user_content_includes_memory_context():
+    """memory_context appears before PR content when provided."""
+    config = ReviewConfig(model="m")
+    memory_ctx = "## Known False Positives\n- [S605] urllib use"
+    content = _build_user_content("diff", config, _meta(title="PR"), memory_context=memory_ctx)
+
+    assert "urllib use" in content
+    assert content.index("urllib use") < content.index("diff")
+
+
+def test_build_user_content_no_memory_context_skips_section():
+    """No memory section appears when memory_context is empty."""
+    config = ReviewConfig(model="m")
+    content = _build_user_content("diff", config, _meta())
+
+    assert "Project Memory" not in content
+
+
+def test_build_messages_passes_memory_context():
+    """build_messages injects memory_context into user message."""
+    config = ReviewConfig(model="m")
+    messages = build_messages("diff", config, _meta(), memory_context="## Known FP\n- pattern")
+
+    assert "pattern" in messages[1]["content"]
+
+
+def test_build_agentic_messages_passes_memory_context():
+    """build_agentic_messages injects memory_context into user message."""
+    config = ReviewConfig(model="m")
+    messages = build_agentic_messages(
+        "diff", config, _meta(), memory_context="## Conventions\n- gh CLI"
+    )
+
+    assert "gh CLI" in messages[1]["content"]
