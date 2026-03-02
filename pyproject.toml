@@ -10,7 +10,13 @@ readme = "README.md"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov>=4.0", "ruff>=0.4", "mutmut>=3.0"]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=4.0",
+  "ruff>=0.4",
+  "mutmut>=3.0",
+  "pyright>=1.1",
+]
 
 [project.scripts]
 guardrails-review = "guardrails_review.cli:main"
@@ -36,9 +42,11 @@ line-length = 100
 select = ["ALL"]
 pydocstyle.convention = "google"
 ignore = [
-  "COM812", "ISC001",     # formatter conflicts
-  "T201",                  # print (CLI tool)
-  "D203", "D213",         # docstring conflicts
+  "COM812",
+  "ISC001", # formatter conflicts
+  "T201",   # print (CLI tool)
+  "D203",
+  "D213",   # docstring conflicts
 ]
 per-file-ignores."tests/**" = [
   "S101",    # assert is fine in tests
@@ -54,14 +62,38 @@ include = ["src/guardrails_review"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
 
+[tool.mypy]
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_reexport = true
+disallow_untyped_decorators = true
+python_version = "3.11"
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+check_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "pytest.*"
+ignore_missing_imports = true
+
+[tool.vulture]
+paths = ["src/guardrails_review"]
+min_confidence = 80
+
 [tool.mutmut]
 paths_to_mutate = ["src/guardrails_review/"]
 tests_dir = ["tests/"]
 do_not_mutate = [
-    "src/guardrails_review/__init__*",
-    "src/guardrails_review/cli*",
-    "src/guardrails_review/llm*",
-    "src/guardrails_review/github*",
-    "src/guardrails_review/tools*",
-    "src/guardrails_review/types*",
+  "src/guardrails_review/__init__*",
+  "src/guardrails_review/cli*",
+  "src/guardrails_review/llm*",
+  "src/guardrails_review/github*",
+  "src/guardrails_review/tools*",
+  "src/guardrails_review/types*",
 ]

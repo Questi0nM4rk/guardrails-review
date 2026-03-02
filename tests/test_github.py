@@ -15,6 +15,7 @@ from guardrails_review.github import (
     get_pr_metadata,
     get_repo_info,
     graphql,
+    post_inline_comments,
     post_review,
     request_changes,
     resolve_thread,
@@ -171,7 +172,9 @@ def test_post_review_approve(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("subprocess.run", mock_run)
 
     result_obj = ReviewResult(verdict="approve", summary="LGTM")
-    success = post_review(pr=1, result=result_obj, owner="org", repo="repo", commit_sha="abc123")
+    success = post_review(
+        pr=1, result=result_obj, owner="org", repo="repo", commit_sha="abc123"
+    )
 
     assert success is True
     body = json.loads(captured_stdin[0])
@@ -192,7 +195,9 @@ def test_post_review_request_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("subprocess.run", mock_run)
 
     result_obj = ReviewResult(verdict="request_changes", summary="Fix issues")
-    success = post_review(pr=2, result=result_obj, owner="org", repo="repo", commit_sha="def456")
+    success = post_review(
+        pr=2, result=result_obj, owner="org", repo="repo", commit_sha="def456"
+    )
 
     assert success is True
     body = json.loads(captured_stdin[0])
@@ -220,7 +225,9 @@ def test_post_review_with_comments(monkeypatch: pytest.MonkeyPatch) -> None:
             start_line=15,
         ),
     ]
-    result_obj = ReviewResult(verdict="request_changes", summary="Issues found", comments=comments)
+    result_obj = ReviewResult(
+        verdict="request_changes", summary="Issues found", comments=comments
+    )
     post_review(pr=3, result=result_obj, owner="org", repo="repo", commit_sha="ghi789")
 
     body = json.loads(captured_stdin[0])
@@ -340,7 +347,7 @@ def test_request_changes_pr(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_graphql_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    """graphql returns parsed JSON from gh api graphql."""
+    """Graphql returns parsed JSON from gh api graphql."""
     response = {"data": {"repository": {"name": "test"}}}
 
     def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -355,7 +362,7 @@ def test_graphql_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_graphql_with_variables(monkeypatch: pytest.MonkeyPatch) -> None:
-    """graphql passes variables via -f and -F flags."""
+    """Graphql passes variables via -f and -F flags."""
     captured_args: list[list[str]] = []
 
     def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -380,7 +387,9 @@ def test_graphql_with_variables(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_resolve_thread_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_thread calls GraphQL mutation and returns True."""
-    response = {"data": {"resolveReviewThread": {"thread": {"id": "t1", "isResolved": True}}}}
+    response = {
+        "data": {"resolveReviewThread": {"thread": {"id": "t1", "isResolved": True}}}
+    }
 
     def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         return _make_completed_process(stdout=json.dumps(response))
@@ -413,7 +422,12 @@ def test_get_deleted_files_returns_removed(monkeypatch: pytest.MonkeyPatch) -> N
     pr_files = {
         "files": [
             {"path": "a.py", "additions": 10, "deletions": 0},
-            {"path": "deleted.py", "additions": 0, "deletions": 20, "status": "removed"},
+            {
+                "path": "deleted.py",
+                "additions": 0,
+                "deletions": 20,
+                "status": "removed",
+            },
             {"path": "renamed.py", "additions": 5, "deletions": 5, "status": "renamed"},
         ]
     }
@@ -439,3 +453,90 @@ def test_get_deleted_files_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     result = get_deleted_files(42)
 
     assert result == set()
+
+
+# --- post_inline_comments ---
+
+
+def test_post_inline_comments_sends_comment_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """post_inline_comments sends a COMMENT review with inline comments."""
+    captured_stdin: list[str] = []
+
+    def mock_run(_args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if kwargs.get("input"):
+            captured_stdin.append(kwargs["input"])
+        return _make_completed_process(stdout="{}")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    comments = [
+        ReviewComment(path="src/foo.py", line=10, body="Bug here", severity="error"),
+        ReviewComment(
+            path="src/bar.py",
+            line=20,
+            body="Multi-line",
+            severity="error",
+            start_line=15,
+        ),
+    ]
+
+    success = post_inline_comments(
+        pr=42,
+        comments=comments,
+        owner="org",
+        repo="repo",
+        commit_sha="abc123",
+    )
+
+    assert success is True
+    body = json.loads(captured_stdin[0])
+    assert body["event"] == "COMMENT"
+    assert body["body"] == ""
+    assert body["commit_id"] == "abc123"
+    assert len(body["comments"]) == 2
+    assert body["comments"][0]["path"] == "src/foo.py"
+    assert body["comments"][0]["side"] == "RIGHT"
+    assert body["comments"][1]["start_line"] == 15
+
+
+def test_post_inline_comments_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """post_inline_comments returns True with no API call when comments is empty."""
+    call_count = {"n": 0}
+
+    def mock_run(_args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        call_count["n"] += 1
+        return _make_completed_process(stdout="{}")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    success = post_inline_comments(
+        pr=42, comments=[], owner="org", repo="repo", commit_sha="abc"
+    )
+
+    assert success is True
+    assert call_count["n"] == 0
+
+
+def test_post_inline_comments_failure_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """post_inline_comments returns False on API failure."""
+
+    def mock_run(_args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _make_completed_process(returncode=1, stderr="permission denied")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    comments = [
+        ReviewComment(path="f.py", line=1, body="Bug", severity="error"),
+    ]
+
+    success = post_inline_comments(
+        pr=42, comments=comments, owner="org", repo="repo", commit_sha="abc"
+    )
+
+    assert success is False

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import json
 import logging
 import re
-from dataclasses import dataclass
 from typing import Any
 
 from guardrails_review.github import run_gh
@@ -43,13 +43,15 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
                     "start_line": {
                         "type": "integer",
                         "description": (
-                            "First line to return (1-indexed, inclusive). Omit for full file."
+                            "First line to return (1-indexed, inclusive)."
+                            " Omit for full file."
                         ),
                     },
                     "end_line": {
                         "type": "integer",
                         "description": (
-                            "Last line to return (1-indexed, inclusive). Omit for full file."
+                            "Last line to return (1-indexed, inclusive)."
+                            " Omit for full file."
                         ),
                     },
                 },
@@ -61,7 +63,9 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         "type": "function",
         "function": {
             "name": "list_changed_files",
-            "description": "List all files changed in the pull request with their change status.",
+            "description": (
+                "List all files changed in the pull request with their change status."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -91,25 +95,15 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
         "type": "function",
         "function": {
-            "name": "submit_review",
+            "name": "post_comments",
             "description": (
-                "Submit the final review. This terminates the review loop. "
-                "Call this when you have gathered enough context."
+                "Post inline review comments to the PR immediately. "
+                "Call this as soon as you find defects. Do not accumulate "
+                "findings -- post each batch as you go."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "verdict": {
-                        "type": "string",
-                        "enum": ["approve", "request_changes"],
-                        "description": "Review verdict.",
-                    },
-                    "summary": {
-                        "type": "string",
-                        "description": (
-                            "Review summary (include <!-- guardrails-review --> marker)."
-                        ),
-                    },
                     "comments": {
                         "type": "array",
                         "items": {
@@ -118,14 +112,33 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
                                 "path": {"type": "string"},
                                 "line": {"type": "integer"},
                                 "body": {"type": "string"},
-                                "start_line": {"type": "integer"},
+                                "start_line": {
+                                    "type": "integer",
+                                    "description": (
+                                        "First line of a multi-line comment (optional)."
+                                    ),
+                                },
                             },
                             "required": ["path", "line", "body"],
                         },
-                        "description": "Inline review comments.",
+                        "description": "Inline review comments to post.",
                     },
                 },
-                "required": ["verdict", "summary", "comments"],
+                "required": ["comments"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finish_review",
+            "description": (
+                "Signal that your review is complete. Call this when you "
+                "have no more files to investigate."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
             },
         },
     },
@@ -221,7 +234,9 @@ def _list_changed_files(_args: dict[str, Any], ctx: ToolContext) -> str:
     return "\n".join(lines)
 
 
-_GITHUB_QUALIFIER_RE = re.compile(r"\b(repo|org|user|path|language|filename):\S+", re.IGNORECASE)
+_GITHUB_QUALIFIER_RE = re.compile(
+    r"\b(repo|org|user|path|language|filename):\S+", re.IGNORECASE
+)
 
 
 def _search_code(args: dict[str, Any], ctx: ToolContext) -> str:

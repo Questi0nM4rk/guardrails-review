@@ -491,7 +491,7 @@ approve code with open defect threads.
 
 ### Per-repo memory
 
-**Status:** Not implemented. Planned.
+**Status:** Not implemented. Designed.
 
 The bot should learn per-project patterns over time:
 
@@ -502,8 +502,78 @@ The bot should learn per-project patterns over time:
 - **Resolution history.** Track how long threads stay open, which types of
   defects recur, and agent fix rates.
 
-Storage would be a local JSON or TOML file (`.guardrails-review/memory.json`)
-that persists across review rounds and is committed to the repo.
+#### Storage: GitHub Gist
+
+The bot runs in ephemeral GitHub Actions runners — no local filesystem persists.
+Storing memory as repo commits creates noise and CI loops. Instead, memory is
+stored as a **private GitHub Gist**, one per project.
+
+**Gist naming:** `guardrails-review-memory-{owner}-{repo}.json`
+
+**Flow:**
+
+1. **First run:** Bot checks for existing gist via `gh gist list`. If none
+   found, creates a private gist with empty memory structure.
+2. **Before review:** Bot loads memory via `gh gist view <id> --raw`.
+3. **After review:** Bot updates the gist via `gh gist edit <id>` with new
+   patterns learned from this review cycle.
+4. **Auth:** Uses the workflow's `GITHUB_TOKEN` — requires `gists: write`
+   permission in the workflow YAML.
+
+**Why gist over alternatives:**
+
+| Option | Free? | Persistent? | Problem |
+|--------|-------|-------------|---------|
+| Actions cache | Yes | 7-day expiry | Memory vanishes if no PRs for a week |
+| Repo variables | Yes | Yes | 48KB limit, too small for growing memory |
+| Commit to repo | Yes | Yes | Noise commits, CI loops, merge conflicts |
+| **Private gist** | **Yes** | **Yes** | **None — free, unlimited, no expiry** |
+
+**Memory schema (v1):**
+
+```json
+{
+  "version": 1,
+  "gist_id": "abc123...",
+  "repo": "owner/repo",
+  "false_positives": [
+    {
+      "pattern": "urllib.request used for OpenRouter API",
+      "rule": "dynamic-urllib-use-detected",
+      "file_pattern": "src/**/llm.py",
+      "occurrences": 3,
+      "first_seen": "2026-02-26",
+      "last_seen": "2026-03-01"
+    }
+  ],
+  "conventions": [
+    "Project uses gh CLI subprocess calls — S603/S607 are expected",
+    "All HTTP calls go through urllib.request, not requests"
+  ],
+  "resolution_stats": {
+    "total_threads": 42,
+    "fixed": 35,
+    "false_positive": 5,
+    "wont_fix": 2,
+    "avg_rounds_to_resolve": 1.4
+  }
+}
+```
+
+**Workflow permissions update:**
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+  # Memory persistence via private gist:
+  gists: write
+```
+
+**Fallback:** If gist operations fail (permissions, network), the bot
+continues without memory — stateless review still works. Memory is an
+enhancement, not a requirement.
 
 ### Multi-line comment support
 

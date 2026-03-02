@@ -7,8 +7,8 @@ relative to the project root. Files are named `pr-{N}-{timestamp}.json`.
 from __future__ import annotations
 
 import dataclasses
-import json
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 
 from guardrails_review.types import ReviewComment, ReviewResult

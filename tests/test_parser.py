@@ -95,7 +95,9 @@ def test_parse_response_adds_marker_to_summary():
 
 def test_parse_response_no_duplicate_marker():
     """Summary already containing marker does not get it duplicated."""
-    raw = json.dumps({"verdict": "approve", "summary": f"{REVIEW_MARKER}\nClean", "comments": []})
+    raw = json.dumps(
+        {"verdict": "approve", "summary": f"{REVIEW_MARKER}\nClean", "comments": []}
+    )
     result = parse_response(raw, "m", 1)
 
     assert result.summary.count(REVIEW_MARKER) == 1

@@ -31,7 +31,8 @@ def test_get_review_threads_parses_graphql(monkeypatch):
                                 "comments": {
                                     "nodes": [
                                         {
-                                            "body": "<!-- guardrails-review -->\nBug here",
+                                            "body": "<!-- guardrails-review -->"
+                                            "\nBug here",
                                             "author": {"login": "github-actions[bot]"},
                                             "createdAt": "2024-01-01T00:00:00Z",
                                         }
@@ -107,7 +108,8 @@ def test_get_review_threads_paginates(monkeypatch):
                                 "comments": {
                                     "nodes": [
                                         {
-                                            "body": "<!-- guardrails-review -->\nSecond",
+                                            "body": "<!-- guardrails-review -->"
+                                            "\nSecond",
                                             "author": {"login": "bot"},
                                             "createdAt": "2024-01-01T00:00:00Z",
                                         }

@@ -44,8 +44,12 @@ def test_build_agent_context_basic(monkeypatch):
         lambda: ("owner", "repo"),
     )
     reviews = [
-        ReviewResult(verdict="request_changes", summary="s", model="m", timestamp="t", pr=42),
-        ReviewResult(verdict="request_changes", summary="s", model="m", timestamp="t", pr=42),
+        ReviewResult(
+            verdict="request_changes", summary="s", model="m", timestamp="t", pr=42
+        ),
+        ReviewResult(
+            verdict="request_changes", summary="s", model="m", timestamp="t", pr=42
+        ),
         ReviewResult(verdict="approve", summary="s", model="m", timestamp="t", pr=42),
     ]
     monkeypatch.setattr(
@@ -148,7 +152,7 @@ def test_build_agent_context_sorted_by_path(monkeypatch):
 
 
 def test_build_agent_context_shown_equals_total_when_under_cap(monkeypatch):
-    """shown equals total_unresolved when under max_comments."""
+    """Shown equals total_unresolved when under max_comments."""
     threads = [
         _make_thread(thread_id=f"t{i}", path=f"f{i}.py", line=i, is_resolved=False)
         for i in range(3)
