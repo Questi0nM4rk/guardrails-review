@@ -153,10 +153,18 @@ def _match_path_instructions(
     changed_files: list[str],
     path_instructions: list[PathInstruction],
 ) -> list[PathInstruction]:
-    """Return path instructions whose glob matches at least one changed file."""
-    return [
-        pi for pi in path_instructions if any(fnmatch.fnmatch(f, pi.path) for f in changed_files)
-    ]
+    """Return path instructions whose glob matches at least one changed file.
+
+    Normalises ``**`` → ``*`` before matching because fnmatch's ``*`` already
+    matches path separators, making ``**`` redundant but potentially confusing.
+    """
+    matched = []
+    for pi in path_instructions:
+        # Collapse consecutive wildcards so "tests/**" behaves like "tests/*"
+        normalized = pi.path.replace("**", "*")
+        if any(fnmatch.fnmatch(f, normalized) for f in changed_files):
+            matched.append(pi)
+    return matched
 
 
 def _build_user_content(  # noqa: PLR0913

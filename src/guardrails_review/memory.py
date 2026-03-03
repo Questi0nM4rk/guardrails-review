@@ -234,6 +234,8 @@ def _put_file(
         f"repos/{owner}/{repo}/contents/{MEMORY_FILENAME}",
         "--method",
         "PUT",
+        "--input",
+        "-",
         input_data=json.dumps(payload),
     )
 

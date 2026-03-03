@@ -204,6 +204,20 @@ def test_build_agentic_messages_no_path_section_when_no_match():
     assert "Path-Specific" not in messages[1]["content"]
 
 
+def test_build_agentic_messages_globstar_path_matches():
+    """Path pattern with ** (globstar) matches nested files (fnmatch normalisation)."""
+    config = ReviewConfig(
+        model="m",
+        path_instructions=[PathInstruction(path="tests/**", instructions="Mock at boundaries")],
+    )
+    messages = build_agentic_messages(
+        "diff", config, _meta(), changed_files=["tests/test_foo.py"]
+    )
+
+    assert "Path-Specific Review Rules" in messages[1]["content"]
+    assert "Mock at boundaries" in messages[1]["content"]
+
+
 def test_build_agentic_messages_empty_previous_comments():
     """Empty previous_comments list -> no 'Existing Unresolved' section."""
     config = ReviewConfig(model="m")
