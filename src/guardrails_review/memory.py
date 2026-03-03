@@ -139,9 +139,12 @@ def _get_file_sha(owner: str, repo: str) -> str:
     proc = run_gh(
         "api",
         f"repos/{owner}/{repo}/contents/{MEMORY_FILENAME}",
-        "--method", "GET",
-        "-H", f"X-GitHub-Ref: {MEMORY_BRANCH}",
-        "-f", f"ref={MEMORY_BRANCH}",
+        "--method",
+        "GET",
+        "-H",
+        f"X-GitHub-Ref: {MEMORY_BRANCH}",
+        "-f",
+        f"ref={MEMORY_BRANCH}",
     )
     data = json.loads(proc.stdout)
     return str(data.get("sha", ""))
@@ -155,8 +158,10 @@ def _read_file_content(owner: str, repo: str) -> str:
     proc = run_gh(
         "api",
         f"repos/{owner}/{repo}/contents/{MEMORY_FILENAME}",
-        "--method", "GET",
-        "-f", f"ref={MEMORY_BRANCH}",
+        "--method",
+        "GET",
+        "-f",
+        f"ref={MEMORY_BRANCH}",
     )
     data = json.loads(proc.stdout)
     # GitHub returns content as base64 with possible newlines
@@ -172,24 +177,34 @@ def _create_orphan_branch(owner: str, repo: str) -> None:
     """
     # Get the default branch SHA to use as base (let RuntimeError propagate on failure)
     proc = run_gh(
-        "api", f"repos/{owner}/{repo}",
-        "--method", "GET",
-        "-q", ".default_branch",
+        "api",
+        f"repos/{owner}/{repo}",
+        "--method",
+        "GET",
+        "-q",
+        ".default_branch",
     )
     default_branch = proc.stdout.strip()
     ref_proc = run_gh(
-        "api", f"repos/{owner}/{repo}/git/ref/heads/{default_branch}",
-        "--method", "GET",
-        "-q", ".object.sha",
+        "api",
+        f"repos/{owner}/{repo}/git/ref/heads/{default_branch}",
+        "--method",
+        "GET",
+        "-q",
+        ".object.sha",
     )
     base_sha = ref_proc.stdout.strip()
 
     try:
         run_gh(
-            "api", f"repos/{owner}/{repo}/git/refs",
-            "--method", "POST",
-            "-f", f"ref=refs/heads/{MEMORY_BRANCH}",
-            "-f", f"sha={base_sha}",
+            "api",
+            f"repos/{owner}/{repo}/git/refs",
+            "--method",
+            "POST",
+            "-f",
+            f"ref=refs/heads/{MEMORY_BRANCH}",
+            "-f",
+            f"sha={base_sha}",
         )
     except RuntimeError as exc:
         # 422 = branch already exists, that's fine
@@ -217,7 +232,8 @@ def _put_file(
     run_gh(
         "api",
         f"repos/{owner}/{repo}/contents/{MEMORY_FILENAME}",
-        "--method", "PUT",
+        "--method",
+        "PUT",
         input_data=json.dumps(payload),
     )
 
@@ -310,9 +326,7 @@ def update_from_review(
     new_fixed = stats.fixed + n_fixed
 
     if new_total > 0:
-        new_avg = (
-            stats.avg_rounds_to_resolve * stats.total_threads + n_fixed * 1.0
-        ) / new_total
+        new_avg = (stats.avg_rounds_to_resolve * stats.total_threads + n_fixed * 1.0) / new_total
     else:
         new_avg = 0.0
 

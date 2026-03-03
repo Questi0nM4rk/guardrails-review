@@ -22,7 +22,7 @@ def test_review_subcommand(monkeypatch):
     calls = []
     monkeypatch.setattr(
         "guardrails_review.cli.run_review",
-        lambda pr, dry_run=False: calls.append((pr, dry_run)) or 0,
+        lambda pr, dry_run=False, verbose=False: calls.append((pr, dry_run)) or 0,
     )
 
     result = main(["review", "--pr", "53"])
@@ -36,7 +36,7 @@ def test_review_dry_run(monkeypatch):
     calls = []
     monkeypatch.setattr(
         "guardrails_review.cli.run_review",
-        lambda pr, dry_run=False: calls.append((pr, dry_run)) or 0,
+        lambda pr, dry_run=False, verbose=False: calls.append((pr, dry_run)) or 0,
     )
 
     main(["review", "--pr", "10", "--dry-run"])

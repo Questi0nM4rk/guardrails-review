@@ -1,0 +1,27 @@
+[config]
+model = "minimax/minimax-m2.5"
+
+[review]
+agentic = true
+# max_iterations = 10
+
+extra_instructions = """
+This is a Python CLI tool. Focus on:
+- Correctness of agentic loop control flow (iteration, break/continue, return paths)
+- Exception handling — only specific exceptions caught, no swallowed errors
+- Type safety — dataclasses used across module boundaries, no dict[str, Any] leaking
+- Subprocess calls via gh CLI only — no direct GitHub API calls
+- Zero runtime dependencies — stdlib only
+"""
+
+[[review.path_instructions]]
+path = "src/guardrails_review/reviewer.py"
+instructions = "This is the core agentic loop. Verify all exit paths return a ReviewResult. Check that timeout retry counter resets correctly on success. Verify premature-submit detection doesn't fire on the second submit attempt."
+
+[[review.path_instructions]]
+path = "src/guardrails_review/prompts.py"
+instructions = "Verify previous_comments injection strips the guardrails-review HTML marker. Check that path_instructions glob matching is correct for all patterns."
+
+[[review.path_instructions]]
+path = "tests/**"
+instructions = "Tests must mock at infrastructure boundaries (subprocess, urllib). No real network calls. Verify new agentic loop tests cover the failure paths they claim."

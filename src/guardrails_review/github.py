@@ -55,7 +55,8 @@ def get_pr_diff(pr: int) -> str:
         pr: Pull request number.
 
     Returns:
-        The unified diff string.
+        The unified diff string (3 context lines per hunk, gh default).
+        Use the read_file tool for additional surrounding context when reviewing.
     """
     proc = run_gh("pr", "diff", str(pr), "--patch")
     return proc.stdout

@@ -53,7 +53,7 @@ model = "openai/gpt-4o"
     assert result.extra_instructions == ""
     assert result.max_diff_chars == 120_000
     assert result.agentic is True
-    assert result.max_iterations == 5
+    assert result.max_iterations == 10
 
 
 def test_load_config_missing_file(tmp_path: Path) -> None:
@@ -111,7 +111,7 @@ def test_load_config_agentic_defaults(tmp_path: Path) -> None:
     result = load_config(tmp_path)
 
     assert result.agentic is True
-    assert result.max_iterations == 5
+    assert result.max_iterations == 10
 
 
 def test_load_config_ignores_removed_fields(tmp_path: Path) -> None:
@@ -133,6 +133,73 @@ severity_threshold = "warning"
     assert result.model == "test/m"
     assert not hasattr(result, "auto_approve")
     assert not hasattr(result, "severity_threshold")
+
+
+def test_load_config_path_instructions_single(tmp_path: Path) -> None:
+    """Single [[review.path_instructions]] block is parsed into PathInstruction."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text(
+        """\
+[config]
+model = "test/m"
+
+[[review.path_instructions]]
+path = "src/**/*.py"
+instructions = "Check for SQL injection"
+"""
+    )
+
+    result = load_config(tmp_path)
+
+    assert len(result.path_instructions) == 1
+    assert result.path_instructions[0].path == "src/**/*.py"
+    assert result.path_instructions[0].instructions == "Check for SQL injection"
+
+
+def test_load_config_path_instructions_multiple(tmp_path: Path) -> None:
+    """Two [[review.path_instructions]] blocks yield two PathInstruction objects."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text(
+        """\
+[config]
+model = "test/m"
+
+[[review.path_instructions]]
+path = "*.py"
+instructions = "Check types"
+
+[[review.path_instructions]]
+path = "*.sql"
+instructions = "Check injection"
+"""
+    )
+
+    result = load_config(tmp_path)
+
+    assert len(result.path_instructions) == 2
+    paths = [pi.path for pi in result.path_instructions]
+    assert "*.py" in paths
+    assert "*.sql" in paths
+
+
+def test_load_config_path_instructions_absent(tmp_path: Path) -> None:
+    """No [[review.path_instructions]] block => path_instructions == []."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text('[config]\nmodel = "test/m"\n')
+
+    result = load_config(tmp_path)
+
+    assert result.path_instructions == []
+
+
+def test_load_config_max_iterations_default_is_10(tmp_path: Path) -> None:
+    """When max_iterations is absent, default is 10."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text('[config]\nmodel = "test/m"\n')
+
+    result = load_config(tmp_path)
+
+    assert result.max_iterations == 10
 
 
 def test_load_config_agentic_disabled(tmp_path: Path) -> None:

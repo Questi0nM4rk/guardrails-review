@@ -256,9 +256,9 @@ def test_execute_tool_submit_review_not_dispatched(ctx):
 
 def test_tool_definitions_have_required_structure():
     """All tool definitions have the expected OpenRouter format."""
-    assert len(TOOL_DEFINITIONS) == 4
+    assert len(TOOL_DEFINITIONS) == 5
     names = {t["function"]["name"] for t in TOOL_DEFINITIONS}
-    assert names == {"read_file", "list_changed_files", "search_code", "submit_review"}
+    assert names == {"read_file", "list_changed_files", "search_code", "submit_review", "think"}
     for tool in TOOL_DEFINITIONS:
         assert tool["type"] == "function"
         assert "description" in tool["function"]

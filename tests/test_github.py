@@ -439,3 +439,22 @@ def test_get_deleted_files_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     result = get_deleted_files(42)
 
     assert result == set()
+
+
+def test_get_pr_diff_uses_patch_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_pr_diff passes --patch to gh pr diff."""
+    captured_args: list[list[str]] = []
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured_args.append(args)
+        return _make_completed_process(stdout="diff output")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    get_pr_diff(42)
+
+    cmd = captured_args[0]
+    assert "--patch" in cmd
+    assert "42" in cmd
+    # gh pr diff does not support -U; no unified flag should be passed
+    assert not any(a.startswith("-U") for a in cmd)

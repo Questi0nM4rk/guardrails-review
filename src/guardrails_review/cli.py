@@ -24,6 +24,10 @@ def _build_parser() -> argparse.ArgumentParser:
     review_p = sub.add_parser("review", help="Run LLM review on a PR")
     review_p.add_argument("--pr", type=int, required=True, help="PR number")
     review_p.add_argument("--dry-run", action="store_true", help="Print review without posting")
+    review_p.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Print each agentic loop iteration (tool calls and model reasoning)",
+    )
 
     # comments
     comments_p = sub.add_parser("comments", help="Query review findings")
@@ -61,7 +65,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_review(args: argparse.Namespace) -> int:
-    return run_review(args.pr, dry_run=args.dry_run)
+    return run_review(args.pr, dry_run=args.dry_run, verbose=args.verbose)
 
 
 def _cmd_comments(args: argparse.Namespace) -> int:

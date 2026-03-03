@@ -125,6 +125,9 @@ def _send_request(
             msg = f"OpenRouter request timed out after {_TIMEOUT_SECONDS}s"
             raise TimeoutError(msg) from exc
         raise
+    except TimeoutError as exc:
+        msg = f"OpenRouter request timed out after {_TIMEOUT_SECONDS}s"
+        raise TimeoutError(msg) from exc
 
     response_data = json.loads(resp.read().decode())
     return _parse_response(response_data)
