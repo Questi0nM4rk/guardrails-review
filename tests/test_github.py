@@ -504,6 +504,31 @@ def test_get_pr_diff_falls_back_to_gh_on_git_failure(monkeypatch: pytest.MonkeyP
     assert result == diff_text
 
 
+def test_get_pr_diff_raises_diff_too_large_on_406(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_pr_diff raises DiffTooLargeError when gh reports the diff is too large."""
+    from guardrails_review.github import DiffTooLargeError
+
+    too_large_stderr = (
+        "could not find pull request diff: HTTP 406: "
+        "Sorry, the diff exceeded the maximum number of lines (20000) "
+        "PullRequest.diff too_large"
+    )
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["gh", "pr"] and "view" in args:
+            return _make_completed_process(stdout='{"baseRefName": "main"}')
+        if args[0] == "git" and args[1] == "fetch":
+            return _make_completed_process(stdout="", returncode=1)
+        if args[:2] == ["gh", "pr"] and "diff" in args:
+            return _make_completed_process(stdout="", stderr=too_large_stderr, returncode=1)
+        return _make_completed_process(stdout="")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    with pytest.raises(DiffTooLargeError, match="PR #42"):
+        get_pr_diff(42)
+
+
 # --- post_inline_comments ---
 
 

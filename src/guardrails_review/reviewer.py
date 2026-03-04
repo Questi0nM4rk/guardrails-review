@@ -11,6 +11,7 @@ from guardrails_review.cache import save_review
 from guardrails_review.config import load_config
 from guardrails_review.diff import format_diff_with_lines, parse_diff_hunks
 from guardrails_review.github import (
+    DiffTooLargeError,
     get_deleted_files,
     get_pr_diff,
     get_pr_metadata,
@@ -286,7 +287,14 @@ def run_review(  # noqa: PLR0915
     Returns 0 on success, 1 on failure.
     """
     config = load_config(project_dir)
-    diff = get_pr_diff(pr)
+    try:
+        diff = get_pr_diff(pr)
+    except DiffTooLargeError as exc:
+        logger.warning("%s", exc)
+        owner, repo = get_repo_info()
+        pr_meta = get_pr_metadata(pr)
+        set_commit_status(owner, repo, pr_meta.head_ref_oid, "success", str(exc))
+        return 0
     pr_meta = get_pr_metadata(pr)
     valid_lines = parse_diff_hunks(diff)
 

@@ -16,6 +16,17 @@ if TYPE_CHECKING:
     from guardrails_review.types import ReviewComment, ReviewResult
 
 
+class DiffTooLargeError(RuntimeError):
+    """Raised when a PR diff exceeds GitHub's 20,000-line API limit."""
+
+    def __init__(self, pr: int) -> None:
+        super().__init__(
+            f"PR #{pr} diff exceeds GitHub's 20,000-line limit — "
+            "automated review skipped"
+        )
+        self.pr = pr
+
+
 def run_gh(
     *args: str,
     timeout: int = 60,
@@ -62,7 +73,7 @@ def get_pr_diff(pr: int, *, unified_context: int = 5) -> str:
     Returns:
         Unified diff string with ``unified_context`` lines of context per hunk.
     """
-    import subprocess as _subprocess
+    import subprocess as _subprocess  # noqa: PLC0415
 
     try:
         meta = run_gh("pr", "view", str(pr), "--json", "baseRefName")
@@ -81,7 +92,12 @@ def get_pr_diff(pr: int, *, unified_context: int = 5) -> str:
     except (RuntimeError, KeyError, json.JSONDecodeError):
         pass
 
-    proc = run_gh("pr", "diff", str(pr), "--patch")
+    try:
+        proc = run_gh("pr", "diff", str(pr), "--patch")
+    except RuntimeError as exc:
+        if "too_large" in str(exc) or "maximum number of lines" in str(exc):
+            raise DiffTooLargeError(pr) from exc
+        raise
     return proc.stdout
 
 
