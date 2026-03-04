@@ -64,7 +64,8 @@ def validate_comments(
         file_lines = valid_lines.get(c.path, set())
         end_line_ok = c.line in file_lines
         start_line_ok = c.start_line is None or c.start_line in file_lines
-        if end_line_ok and start_line_ok:
+        range_ok = c.start_line is None or c.start_line <= c.line
+        if end_line_ok and start_line_ok and range_ok:
             valid.append(c)
         else:
             invalid.append(c)

@@ -4,7 +4,7 @@ on:
     types: [opened, reopened, ready_for_review, synchronize]
 
 concurrency:
-  group: guardrails-review-${{ github.event.pull_request.number }}
+  group: guardrails-review
   cancel-in-progress: false
 
 jobs:

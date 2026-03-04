@@ -451,6 +451,48 @@ def test_update_from_review_returns_new_instance() -> None:
     assert updated is not mem
 
 
+def test_update_from_review_no_double_counting() -> None:
+    """Calling update_from_review multiple times with same resolved thread does not double-count."""
+    mem = _make_memory()
+    result = _make_result()
+    thread = _make_thread("t1", is_resolved=True)
+
+    # First call: thread is new, should count
+    updated1 = update_from_review(mem, result, [thread])
+    assert updated1.resolution_stats.fixed == 1
+
+    # Second call: same thread already counted, should NOT increment again
+    updated2 = update_from_review(updated1, result, [thread])
+    assert updated2.resolution_stats.fixed == 1
+    assert updated2.resolution_stats.total_threads == 1
+
+
+def test_update_from_review_resolved_thread_ids_persisted() -> None:
+    """resolved_thread_ids in returned stats includes the newly counted thread IDs."""
+    mem = _make_memory()
+    result = _make_result()
+    thread = _make_thread("t99", is_resolved=True)
+
+    updated = update_from_review(mem, result, [thread])
+
+    assert "t99" in updated.resolution_stats.resolved_thread_ids
+
+
+def test_update_from_review_new_threads_counted_on_second_call() -> None:
+    """A second call with a new thread ID still increments the count."""
+    mem = _make_memory()
+    result = _make_result()
+    t1 = _make_thread("t1", is_resolved=True)
+    t2 = _make_thread("t2", is_resolved=True)
+
+    updated1 = update_from_review(mem, result, [t1])
+    updated2 = update_from_review(updated1, result, [t1, t2])
+
+    assert updated2.resolution_stats.fixed == 2
+    assert "t1" in updated2.resolution_stats.resolved_thread_ids
+    assert "t2" in updated2.resolution_stats.resolved_thread_ids
+
+
 # ---------------------------------------------------------------------------
 # build_memory_context
 # ---------------------------------------------------------------------------

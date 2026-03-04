@@ -244,6 +244,18 @@ def test_validate_comments_multiline_end_line_outside_diff_is_invalid():
     assert len(invalid) == 1
 
 
+def test_validate_comments_inverted_range_is_invalid():
+    """Comment with start_line > line (inverted range) is invalid even if both lines in diff."""
+    valid_lines = {"foo.py": {5, 6, 7, 8, 9, 10}}
+    comments = [
+        ReviewComment(path="foo.py", line=5, body="inverted", severity="error", start_line=10),
+    ]
+    valid, invalid = validate_comments(comments, valid_lines)
+
+    assert len(valid) == 0
+    assert len(invalid) == 1
+
+
 def test_validate_comments_no_start_line_behaves_as_before():
     """Comments without start_line use only line for validation (unchanged behavior)."""
     valid_lines = {"foo.py": {10}}
