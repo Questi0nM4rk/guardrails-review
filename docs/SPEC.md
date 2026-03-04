@@ -56,11 +56,15 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+concurrency:
+  group: guardrails-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   review:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write   # required for guardrails-memory branch
       pull-requests: write
       statuses: write
     steps:
@@ -235,7 +239,7 @@ pip-installs the package, and runs `guardrails-review review --pr N`.
 
 ```yaml
 permissions:
-  contents: read
+  contents: write   # read for checkout + write for guardrails-memory branch
   pull-requests: write
   statuses: write
 ```
@@ -491,9 +495,9 @@ approve code with open defect threads.
 
 ### Per-repo memory
 
-**Status:** Not implemented. Designed.
+**Status:** Implemented (branch-based storage).
 
-The bot should learn per-project patterns over time:
+The bot learns per-project patterns over time:
 
 - **False positive patterns.** Track which defect comments get resolved as false
   positives. Suppress similar comments in future reviews.
@@ -502,88 +506,36 @@ The bot should learn per-project patterns over time:
 - **Resolution history.** Track how long threads stay open, which types of
   defects recur, and agent fix rates.
 
-#### Storage: GitHub Gist
+**Storage:** `memory.json` on the `guardrails-memory` orphan branch of the
+target repository. Uses the GitHub Contents API via `gh api`. Requires only
+`contents: write` — the default `GITHUB_TOKEN` already has this.
 
-The bot runs in ephemeral GitHub Actions runners — no local filesystem persists.
-Storing memory as repo commits creates noise and CI loops. Instead, memory is
-stored as a **private GitHub Gist**, one per project.
+**Load:** `GET /repos/{owner}/{repo}/contents/memory.json?ref=guardrails-memory`,
+base64-decode content. Falls back to empty stateless Memory on any failure.
 
-**Gist naming:** `guardrails-review-memory-{owner}-{repo}.json`
+**Save:** `PUT /repos/{owner}/{repo}/contents/memory.json` with base64-encoded
+content and the current file SHA (for updates). Creates the orphan branch on
+first run. Prunes `false_positives` to 50 entries (LRU by `last_seen`) before
+writing. Logs a warning if serialized size exceeds 100 KB.
 
-**Flow:**
+**Concurrency:** Use `concurrency: group: guardrails-review-${{ github.event.pull_request.number }}`
+in the workflow to serialize runs on the same PR. The branch approach is not
+atomic — concurrent writes can race.
 
-1. **First run:** Bot checks for existing gist via `gh gist list`. If none
-   found, creates a private gist with empty memory structure.
-2. **Before review:** Bot loads memory via `gh gist view <id> --raw`.
-3. **After review:** Bot updates the gist via `gh gist edit <id>` with new
-   patterns learned from this review cycle.
-4. **Auth:** Uses the workflow's `GITHUB_TOKEN` — requires `gists: write`
-   permission in the workflow YAML.
-
-**Why gist over alternatives:**
-
-| Option | Free? | Persistent? | Problem |
-|--------|-------|-------------|---------|
-| Actions cache | Yes | 7-day expiry | Memory vanishes if no PRs for a week |
-| Repo variables | Yes | Yes | 48KB limit, too small for growing memory |
-| Commit to repo | Yes | Yes | Noise commits, CI loops, merge conflicts |
-| **Private gist** | **Yes** | **Yes** | **None — free, unlimited, no expiry** |
-
-**Memory schema (v1):**
-
-```json
-{
-  "version": 1,
-  "gist_id": "abc123...",
-  "repo": "owner/repo",
-  "false_positives": [
-    {
-      "pattern": "urllib.request used for OpenRouter API",
-      "rule": "dynamic-urllib-use-detected",
-      "file_pattern": "src/**/llm.py",
-      "occurrences": 3,
-      "first_seen": "2026-02-26",
-      "last_seen": "2026-03-01"
-    }
-  ],
-  "conventions": [
-    "Project uses gh CLI subprocess calls — S603/S607 are expected",
-    "All HTTP calls go through urllib.request, not requests"
-  ],
-  "resolution_stats": {
-    "total_threads": 42,
-    "fixed": 35,
-    "false_positive": 5,
-    "wont_fix": 2,
-    "avg_rounds_to_resolve": 1.4
-  }
-}
-```
-
-**Workflow permissions update:**
-
-```yaml
-permissions:
-  contents: read
-  pull-requests: write
-  statuses: write
-  # Memory persistence via private gist:
-  gists: write
-```
-
-**Fallback:** If gist operations fail (permissions, network), the bot
-continues without memory — stateless review still works. Memory is an
-enhancement, not a requirement.
+**Required workflow permission:** `contents: write` (replaces the previously
+documented `gists: write`, which is not a valid Actions permission scope).
 
 ### Multi-line comment support
 
-**Status:** Partially implemented.
+**Status:** Implemented.
 
-The `ReviewComment` dataclass has a `start_line` field. The `submit_review` tool
-schema includes `start_line` as an optional parameter. The `post_review` function
-sends `start_line`/`start_side` when present. However, oneshot mode does not
-prompt the LLM for multi-line ranges, and validation does not check `start_line`
-against diff hunks.
+- `ReviewComment` dataclass has a `start_line: int | None` field.
+- `submit_review` tool schema includes `start_line` as an optional parameter.
+- `post_review` sends `start_line`/`start_side: RIGHT` to the GitHub API when present.
+- `validate_comments` checks both `line` and `start_line` (when set) against
+  diff hunks — comments where either falls outside the diff are rejected.
+- Oneshot system prompt includes `start_line` in the JSON schema so the LLM
+  knows to provide it for multi-line defects.
 
 ---
 

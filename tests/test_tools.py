@@ -266,12 +266,13 @@ def test_execute_tool_finish_review_not_dispatched(ctx):
 
 def test_tool_definitions_have_required_structure():
     """All tool definitions have the expected OpenRouter format."""
-    assert len(TOOL_DEFINITIONS) == 5
+    assert len(TOOL_DEFINITIONS) == 6
     names = {t["function"]["name"] for t in TOOL_DEFINITIONS}
     assert names == {
         "read_file",
         "list_changed_files",
         "search_code",
+        "think",
         "post_comments",
         "finish_review",
     }

@@ -18,6 +18,14 @@ class PRMetadata:
 
 
 @dataclass(frozen=True)
+class PathInstruction:
+    """A path glob with associated review instructions."""
+
+    path: str
+    instructions: str
+
+
+@dataclass(frozen=True)
 class ReviewConfig:
     """Configuration loaded from .guardrails-review.toml."""
 
@@ -26,6 +34,7 @@ class ReviewConfig:
     max_diff_chars: int = 120_000
     agentic: bool = True
     max_iterations: int = 30
+    path_instructions: list[PathInstruction] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

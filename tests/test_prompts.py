@@ -13,7 +13,7 @@ from guardrails_review.prompts import (
     build_ci_context,
     build_messages,
 )
-from guardrails_review.types import PRMetadata, ReviewConfig
+from guardrails_review.types import PathInstruction, PRMetadata, ReviewConfig, ReviewThread
 
 
 def _meta(title="T", body="", head_ref_oid="sha", base_ref_name="main"):
@@ -115,6 +115,130 @@ def test_build_agentic_messages_uses_agentic_prompt():
     assert "tools" in messages[0]["content"].lower()
     assert "post_comments" in messages[0]["content"]
     assert "finish_review" in messages[0]["content"]
+
+
+def test_build_user_content_includes_memory_context():
+    """memory_context appears before PR content when provided."""
+    config = ReviewConfig(model="m")
+    memory_ctx = "## Known False Positives\n- [S605] urllib use"
+    content = _build_user_content("diff", config, _meta(title="PR"), memory_context=memory_ctx)
+
+    assert "urllib use" in content
+    assert content.index("urllib use") < content.index("diff")
+
+
+def test_build_user_content_no_memory_context_skips_section():
+    """No memory section appears when memory_context is empty."""
+    config = ReviewConfig(model="m")
+    content = _build_user_content("diff", config, _meta())
+
+    assert "Project Memory" not in content
+
+
+def test_build_messages_passes_memory_context():
+    """build_messages injects memory_context into user message."""
+    config = ReviewConfig(model="m")
+    messages = build_messages("diff", config, _meta(), memory_context="## Known FP\n- pattern")
+
+    assert "pattern" in messages[1]["content"]
+
+
+def test_build_agentic_messages_passes_memory_context():
+    """build_agentic_messages injects memory_context into user message."""
+    config = ReviewConfig(model="m")
+    messages = build_agentic_messages(
+        "diff", config, _meta(), memory_context="## Conventions\n- gh CLI"
+    )
+
+    assert "gh CLI" in messages[1]["content"]
+
+
+def test_agentic_prompt_requires_finish_review():
+    """MUST and finish_review() appear in the agentic system prompt."""
+    assert "MUST" in _AGENTIC_SYSTEM_PROMPT
+    assert "finish_review()" in _AGENTIC_SYSTEM_PROMPT
+
+
+def test_agentic_prompt_contains_ai_defect_categories():
+    """AI-specific defect categories are in the agentic system prompt."""
+    assert "Hallucinated" in _AGENTIC_SYSTEM_PROMPT
+    assert "idempotency" in _AGENTIC_SYSTEM_PROMPT
+    assert "Hardcoded" in _AGENTIC_SYSTEM_PROMPT
+    assert "Code duplication" in _AGENTIC_SYSTEM_PROMPT
+    assert "Unnecessary complexity" in _AGENTIC_SYSTEM_PROMPT
+    assert "last line of defense" in _AGENTIC_SYSTEM_PROMPT
+
+
+def test_build_agentic_messages_injects_previous_comments():
+    """ReviewThread in previous_comments -> 'Existing Unresolved' section in user msg."""
+    config = ReviewConfig(model="m")
+    thread = ReviewThread(
+        thread_id="t1",
+        path="src/foo.py",
+        line=42,
+        body="This is a bug",
+        is_resolved=False,
+        is_outdated=False,
+        author="bot",
+        created_at="2024-01-01",
+    )
+    messages = build_agentic_messages(
+        "diff", config, _meta(), previous_comments=[thread]
+    )
+
+    assert "Existing Unresolved" in messages[1]["content"]
+    assert "src/foo.py:42" in messages[1]["content"]
+
+
+def test_build_agentic_messages_injects_matched_path_instructions():
+    """Matching path glob -> 'Path-Specific Review Rules' section in user message."""
+    config = ReviewConfig(
+        model="m",
+        path_instructions=[PathInstruction(path="*.py", instructions="Check types")],
+    )
+    messages = build_agentic_messages(
+        "diff", config, _meta(), changed_files=["src/main.py"]
+    )
+
+    assert "Path-Specific Review Rules" in messages[1]["content"]
+    assert "Check types" in messages[1]["content"]
+
+
+def test_build_agentic_messages_no_path_section_when_no_match():
+    """Non-matching path glob -> no 'Path-Specific' section in user message."""
+    config = ReviewConfig(
+        model="m",
+        path_instructions=[PathInstruction(path="*.sql", instructions="Check injection")],
+    )
+    messages = build_agentic_messages(
+        "diff", config, _meta(), changed_files=["src/main.py"]
+    )
+
+    assert "Path-Specific" not in messages[1]["content"]
+
+
+def test_build_agentic_messages_globstar_path_matches():
+    """Path pattern with ** (globstar) matches nested files (fnmatch normalisation)."""
+    config = ReviewConfig(
+        model="m",
+        path_instructions=[PathInstruction(path="tests/**", instructions="Mock at boundaries")],
+    )
+    messages = build_agentic_messages(
+        "diff", config, _meta(), changed_files=["tests/test_foo.py"]
+    )
+
+    assert "Path-Specific Review Rules" in messages[1]["content"]
+    assert "Mock at boundaries" in messages[1]["content"]
+
+
+def test_build_agentic_messages_empty_previous_comments():
+    """Empty previous_comments list -> no 'Existing Unresolved' section."""
+    config = ReviewConfig(model="m")
+    messages = build_agentic_messages(
+        "diff", config, _meta(), previous_comments=[]
+    )
+
+    assert "Existing Unresolved" not in messages[1]["content"]
 
 
 def test_build_agentic_messages_includes_ci_context():

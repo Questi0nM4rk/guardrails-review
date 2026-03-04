@@ -29,6 +29,63 @@ def _is_metadata(line: str) -> bool:
     return line.startswith(_METADATA_PREFIXES) or line.startswith("\\ ")
 
 
+def format_diff_with_lines(diff: str) -> str:
+    """Format a unified diff with embedded right-side line numbers.
+
+    For each ``+`` (addition) or `` `` (context) line, prepends
+    ``LINE_N:`` so the LLM can reference precise line numbers.
+    Deletion lines, headers, and binary markers are output unchanged.
+
+    Args:
+        diff: Full unified diff string.
+
+    Returns:
+        The reformatted diff with ``LINE_N:`` prefixes on content lines.
+    """
+    if not diff:
+        return ""
+
+    output: list[str] = []
+    right_line = 0
+
+    for line in diff.splitlines():
+        # New file header — output unchanged, reset nothing
+        header_match = _DIFF_HEADER_RE.match(line)
+        if header_match:
+            output.append(line)
+            continue
+
+        # Binary file marker — output unchanged
+        if line.startswith("Binary files "):
+            output.append(line)
+            continue
+
+        # Metadata lines — output unchanged
+        if _is_metadata(line):
+            output.append(line)
+            continue
+
+        # Hunk header — output unchanged, reset right_line counter
+        hunk_match = _HUNK_RE.match(line)
+        if hunk_match:
+            right_line = int(hunk_match.group(1))
+            output.append(line)
+            continue
+
+        # Addition (+) or context ( ) line — prefix with LINE_N:
+        if line.startswith((" ", "+")):
+            prefix = line[0]
+            content = line[1:]
+            output.append(f"{prefix}LINE_{right_line}: {content}")
+            right_line += 1
+            continue
+
+        # Deletion (-) line — output unchanged, right_line does not advance
+        output.append(line)
+
+    return "\n".join(output)
+
+
 def parse_diff_hunks(diff: str) -> dict[str, set[int]]:
     """Parse unified diff and return valid right-side line numbers per file.
 

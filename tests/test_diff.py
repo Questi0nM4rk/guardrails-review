@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from guardrails_review.diff import parse_diff_hunks
+from guardrails_review.diff import format_diff_with_lines, parse_diff_hunks
 
 
 def test_parse_single_hunk() -> None:
@@ -248,6 +248,114 @@ index aaa..bbb 100644
 """
     result = parse_diff_hunks(diff)
     assert list(result.keys()) == ["only.py"]
+
+
+def test_format_diff_with_lines_adds_line_numbers() -> None:
+    """Addition lines get LINE_N: prefix with correct right-side line number."""
+    diff = """\
+diff --git a/src/foo.py b/src/foo.py
+index aaa..bbb 100644
+--- a/src/foo.py
++++ b/src/foo.py
+@@ -1,2 +1,3 @@
+ context
++new line
+ end
+"""
+    result = format_diff_with_lines(diff)
+    assert "+LINE_2: new line" in result
+
+
+def test_format_diff_with_lines_context_lines_numbered() -> None:
+    """Context lines (space prefix) get LINE_N: prefix."""
+    diff = """\
+diff --git a/src/foo.py b/src/foo.py
+index aaa..bbb 100644
+--- a/src/foo.py
++++ b/src/foo.py
+@@ -1,2 +1,3 @@
+ context
++new line
+ end
+"""
+    result = format_diff_with_lines(diff)
+    assert " LINE_1: context" in result
+    assert " LINE_3: end" in result
+
+
+def test_format_diff_with_lines_deletions_unchanged() -> None:
+    """Deletion lines (-) are output unchanged with no LINE_N prefix."""
+    diff = """\
+diff --git a/src/foo.py b/src/foo.py
+index aaa..bbb 100644
+--- a/src/foo.py
++++ b/src/foo.py
+@@ -1,3 +1,2 @@
+ keep
+-deleted line
+ other
+"""
+    result = format_diff_with_lines(diff)
+    assert "-deleted line" in result
+    assert "LINE" not in result.splitlines()[result.splitlines().index("-deleted line")]
+
+
+def test_format_diff_with_lines_headers_unchanged() -> None:
+    """diff --git and @@ header lines are output unchanged."""
+    diff = """\
+diff --git a/src/foo.py b/src/foo.py
+index aaa..bbb 100644
+--- a/src/foo.py
++++ b/src/foo.py
+@@ -1,1 +1,1 @@
+ same
+"""
+    result = format_diff_with_lines(diff)
+    assert "diff --git a/src/foo.py b/src/foo.py" in result
+    assert "@@ -1,1 +1,1 @@" in result
+
+
+def test_format_diff_with_lines_multiple_hunks_resets_counter() -> None:
+    """Second hunk starts numbering at its own right-side start line."""
+    diff = """\
+diff --git a/app.py b/app.py
+index aaa..bbb 100644
+--- a/app.py
++++ b/app.py
+@@ -1,1 +1,1 @@
+ first
+@@ -50,1 +50,2 @@
+ fifty
++fifty one
+"""
+    result = format_diff_with_lines(diff)
+    assert " LINE_1: first" in result
+    assert " LINE_50: fifty" in result
+    assert "+LINE_51: fifty one" in result
+
+
+def test_format_diff_with_lines_empty_string() -> None:
+    """Empty diff string returns empty string."""
+    assert format_diff_with_lines("") == ""
+
+
+def test_format_diff_with_lines_pure_deletion() -> None:
+    """Pure deletion diff produces no LINE_N: prefixes — deletion lines are unchanged."""
+    diff = (
+        "diff --git a/removed.py b/removed.py\n"
+        "deleted file mode 100644\n"
+        "--- a/removed.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,3 +0,0 @@\n"
+        "-line1\n"
+        "-line2\n"
+        "-line3\n"
+    )
+    result = format_diff_with_lines(diff)
+    assert "LINE_" not in result
+    assert "-line1" in result
+    assert "-line2" in result
+    assert "-line3" in result
 
 
 def test_parse_no_newline_marker_excluded_from_line_set() -> None:

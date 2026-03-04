@@ -95,6 +95,30 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
         "type": "function",
         "function": {
+            "name": "think",
+            "description": (
+                "Write down your analysis and reasoning. Use this before taking any "
+                "other action to plan your approach. The output is not shown to the "
+                "PR author — it is only for your own reasoning."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reasoning": {
+                        "type": "string",
+                        "description": (
+                            "Your analysis of the diff: what changed, what risks "
+                            "you see, what context you need to gather."
+                        ),
+                    },
+                },
+                "required": ["reasoning"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "post_comments",
             "description": (
                 "Post inline review comments to the PR immediately. "
@@ -145,6 +169,13 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 ]
 
 
+def _think(args: dict[str, Any], ctx: ToolContext) -> str:  # noqa: ARG001
+    """Accept reasoning from the model and acknowledge it."""
+    reasoning = args.get("reasoning", "")
+    logger.debug("Model reasoning: %s", reasoning)
+    return "Noted. Continue with your review."
+
+
 def execute_tool(name: str, arguments: str, ctx: ToolContext) -> str:
     """Dispatch a tool call and return the result as a string.
 
@@ -165,6 +196,7 @@ def execute_tool(name: str, arguments: str, ctx: ToolContext) -> str:
         "read_file": _read_file,
         "list_changed_files": _list_changed_files,
         "search_code": _search_code,
+        "think": _think,
     }
 
     handler = dispatch.get(name)

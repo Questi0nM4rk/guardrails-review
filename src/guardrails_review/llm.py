@@ -79,7 +79,7 @@ def call_openrouter_tools(
     )
 
 
-def _send_request(
+def _send_request(  # noqa: PLR0915
     messages: list[dict[str, Any]],
     model: str,
     *,
@@ -129,6 +129,9 @@ def _send_request(
             msg = f"OpenRouter request timed out after {_TIMEOUT_SECONDS}s"
             raise TimeoutError(msg) from exc
         raise
+    except TimeoutError as exc:
+        msg = f"OpenRouter request timed out after {_TIMEOUT_SECONDS}s"
+        raise TimeoutError(msg) from exc
 
     response_data = json.loads(resp.read().decode())
     usage: dict[str, int] = response_data.get("usage", {})

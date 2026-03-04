@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from guardrails_review.cache import save_review
 from guardrails_review.config import load_config
-from guardrails_review.diff import parse_diff_hunks
+from guardrails_review.diff import format_diff_with_lines, parse_diff_hunks
 from guardrails_review.github import (
     get_deleted_files,
     get_pr_diff,
@@ -21,6 +21,12 @@ from guardrails_review.github import (
     set_commit_status,
 )
 from guardrails_review.llm import call_openrouter, call_openrouter_tools
+from guardrails_review.memory import (
+    build_memory_context,
+    load_memory,
+    save_memory,
+    update_from_review,
+)
 from guardrails_review.models import get_model_context_length
 from guardrails_review.parser import parse_response
 from guardrails_review.prompts import (
@@ -55,6 +61,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_MAX_TIMEOUT_RETRIES = 2
+_PREMATURE_SUBMIT_MIN_TOOLS = 2
+_PREMATURE_SUBMIT_DIFF_THRESHOLD = 100
 _NO_PROGRESS_LIMIT = 2
 
 
@@ -71,7 +80,9 @@ def validate_comments(
     invalid: list[ReviewComment] = []
     for c in comments:
         file_lines = valid_lines.get(c.path, set())
-        if c.line in file_lines:
+        end_line_ok = c.line in file_lines
+        start_line_ok = c.start_line is None or c.start_line in file_lines
+        if end_line_ok and start_line_ok:
             valid.append(c)
         else:
             invalid.append(c)
@@ -92,14 +103,10 @@ def _try_dedup(
     pr: int,
     final: ReviewResult,
     invalid_comments: list[ReviewComment],
-    owner: str,
-    repo: str,
-) -> tuple[ReviewResult, list[ReviewThread]]:
+    our_existing: list[ReviewThread],
+) -> ReviewResult:
     """Deduplicate comments against existing threads."""
-    our_existing: list[ReviewThread] = []
     try:
-        existing_threads = get_review_threads(pr, owner, repo)
-        our_existing = get_our_threads(existing_threads)
         deduped = deduplicate_comments(final.comments, our_existing)
         if len(deduped) != len(final.comments):
             logger.info(
@@ -116,9 +123,9 @@ def _try_dedup(
                 pr=pr,
             )
     except RuntimeError:
-        logger.warning("Failed to fetch threads for deduplication (non-fatal)")
+        logger.warning("Failed to deduplicate comments (non-fatal)")
 
-    return final, our_existing
+    return final
 
 
 def _try_auto_resolve(
@@ -265,10 +272,11 @@ def _post_and_set_status(
     return 0
 
 
-def run_review(
+def run_review(  # noqa: PLR0915
     pr: int,
     *,
     dry_run: bool = False,
+    verbose: bool = False,
     project_dir: Path | None = None,
 ) -> int:
     """Execute the full review pipeline.
@@ -282,20 +290,49 @@ def run_review(
     pr_meta = get_pr_metadata(pr)
     valid_lines = parse_diff_hunks(diff)
 
+    owner, repo = get_repo_info()
+    memory = load_memory(owner, repo)
+    memory_context = build_memory_context(memory)
+
+    # Fetch threads once — used for both previous_comments injection and dedup
+    our_existing: list[ReviewThread] = []
+    try:
+        all_threads = get_review_threads(pr, owner, repo)
+        our_existing = get_our_threads(all_threads)
+    except RuntimeError:
+        logger.warning("Failed to fetch review threads (non-fatal)")
+
+    previous_comments = [t for t in our_existing if not t.is_resolved]
+
     if config.agentic:
-        result = _run_agentic_review(config, diff, pr_meta, pr)
+        result = _run_agentic_review(
+            config,
+            diff,
+            pr_meta,
+            pr,
+            owner=owner,
+            repo=repo,
+            memory_context=memory_context,
+            previous_comments=previous_comments,
+            valid_lines=valid_lines,
+            verbose=verbose,
+        )
     else:
-        result = _run_oneshot_review(config, diff, pr_meta, pr)
+        result = _run_oneshot_review(
+            config, diff, pr_meta, pr, memory_context=memory_context
+        )
 
     final, invalid_comments = _build_final_result(result, valid_lines, pr)
 
-    owner, repo = get_repo_info()
     commit_sha = pr_meta.head_ref_oid
 
     if not dry_run:
         _try_set_status(owner, repo, commit_sha, "pending", "Review in progress")
 
-    final, our_existing = _try_dedup(pr, final, invalid_comments, owner, repo)
+    # Deduplicate comments against pre-fetched threads
+    final = _try_dedup(pr, final, invalid_comments, our_existing)
+
+    # Auto-resolve stale threads before posting
     auto_resolved_ids = _try_auto_resolve(pr, our_existing, valid_lines, commit_sha)
     final = _block_approval_if_unresolved(final, our_existing, auto_resolved_ids, pr)
 
@@ -303,9 +340,30 @@ def run_review(
         _print_dry_run(final)
         return 0
 
-    return _post_and_set_status(
-        pr, final, invalid_comments, (owner, repo, commit_sha), project_dir
-    )
+    try:
+        post_review(pr, final, owner, repo, commit_sha)
+    except RuntimeError as exc:
+        logger.exception("Failed to post review")
+        print(f"Error posting review: {exc}")
+        _try_set_status(owner, repo, commit_sha, "error", "Review post failed")
+        return 1
+
+    save_review(final, project_dir)
+
+    # Update and persist memory after review
+    updated_memory = update_from_review(memory, final, our_existing)
+    save_memory(updated_memory)
+
+    # Set final commit status
+    n = len(final.comments) + len(invalid_comments)
+    if final.verdict == "approve":
+        _try_set_status(owner, repo, commit_sha, "success", "Approved")
+    else:
+        desc = f"{n} defect(s) found" if n > 0 else "Unresolved threads remain"
+        _try_set_status(owner, repo, commit_sha, "failure", desc)
+
+    print(f"Review posted for PR #{pr}: {final.verdict}")
+    return 0
 
 
 def _run_oneshot_review(
@@ -313,11 +371,69 @@ def _run_oneshot_review(
     diff: str,
     pr_meta: PRMetadata,
     pr: int,
+    memory_context: str = "",
 ) -> ReviewResult:
     """Run the original single-shot review (diff -> LLM JSON -> result)."""
-    messages = build_messages(diff, config, pr_meta)
+    messages = build_messages(diff, config, pr_meta, memory_context=memory_context)
     raw_response = call_openrouter(messages, config.model)
     return parse_response(raw_response, config.model, pr)
+
+
+def _nudge_empty_stop() -> dict[str, str]:
+    return {
+        "role": "user",
+        "content": (
+            "You stopped without calling submit_review(). "
+            "You MUST call submit_review() to complete the review. "
+            "If the code looks clean, call submit_review(verdict='approve', ...). "
+            "Please submit your review now."
+        ),
+    }
+
+
+def _nudge_premature_submit(tool_use_count: int, diff_lines: int) -> dict[str, str]:
+    return {
+        "role": "user",
+        "content": (
+            f"You called submit_review() after only {tool_use_count} tool use(s) "
+            f"on a diff with {diff_lines} lines. "
+            "Please investigate more thoroughly — use read_file() to examine the "
+            "changed functions in full context, or search_code() to check callers. "
+            "You may call submit_review() again when ready."
+        ),
+    }
+
+
+def _count_diff_lines(diff: str) -> int:
+    """Count right-side lines (additions + context) in a unified diff."""
+    return sum(
+        1
+        for line in diff.splitlines()
+        if line.startswith((" ", "+")) and not line.startswith("+++")
+    )
+
+
+def _print_iteration(iteration: int, response: LLMResponse) -> None:
+    """Print a human-readable summary of one agentic loop iteration to stdout."""
+    import json as _json  # noqa: PLC0415
+
+    tool_names = [tc.name for tc in response.tool_calls]
+    print(
+        f"\n[iter {iteration}] finish={response.finish_reason!r} "
+        f"tools={tool_names} content_len={len(response.content or '')}",
+        flush=True,
+    )
+    if response.content:
+        print(f"  reasoning: {response.content[:500]}", flush=True)
+    for tc in response.tool_calls:
+        if tc.name == "think":
+            args = _json.loads(tc.arguments)
+            reasoning = args.get("reasoning", "")
+            print(f"  [think] {reasoning[:800]}", flush=True)
+        elif tc.name != "submit_review":
+            print(f"  [{tc.name}] {tc.arguments[:200]}", flush=True)
+        else:
+            print("  [submit_review] (verdict in output below)", flush=True)
 
 
 def _validate_and_post(
@@ -436,7 +552,7 @@ def _dispatch_tool_call(
         )
         return False
 
-    # read_file, search_code, list_changed_files
+    # think, read_file, search_code, list_changed_files
     print(f"[agentic] tool: {tc.name}({tc.arguments[:80]}...)")
     tool_result = execute_tool(tc.name, tc.arguments, state.tool_ctx)
     state.messages.append(
@@ -468,17 +584,32 @@ def _inject_budget_messages(state: _AgenticState) -> None:
         state.budget_warning_sent = True
 
 
-def _init_agentic_state(
+def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
     config: ReviewConfig,
     diff: str,
     pr_meta: PRMetadata,
     pr: int,
-) -> _AgenticState:
-    """Build the initial agentic loop state (budget, threads, messages)."""
-    owner, repo = get_repo_info()
+    owner: str = "",
+    repo: str = "",
+    memory_context: str = "",
+    previous_comments: list[ReviewThread] | None = None,
+    valid_lines: dict[str, set[int]] | None = None,
+    verbose: bool = False,  # noqa: FBT001, FBT002
+) -> ReviewResult:
+    """Run the agentic tool-use review loop with incremental posting.
+
+    Inline comments are posted to GitHub as they are found via post_comments().
+    Falls back to oneshot on tool-use API errors or repeated timeouts.
+    The returned ReviewResult has comments=[] because they are already posted.
+    """
+    if not owner or not repo:
+        owner, repo = get_repo_info()
     commit_sha = pr_meta.head_ref_oid
     tool_ctx = ToolContext(pr=pr, owner=owner, repo=repo, commit_sha=commit_sha)
-    valid_lines = parse_diff_hunks(diff)
+
+    changed_files = list(valid_lines.keys()) if valid_lines else []
+    diff_lines = _count_diff_lines(diff)
+    formatted_diff = format_diff_with_lines(diff)
 
     ctx_length = get_model_context_length(config.model)
     budget = TokenBudget(
@@ -495,61 +626,28 @@ def _init_agentic_state(
 
     ci_context = build_ci_context(owner, repo, commit_sha)
     messages: list[dict[str, Any]] = build_agentic_messages(
-        diff, config, pr_meta, ci_context=ci_context
+        formatted_diff,
+        config,
+        pr_meta,
+        memory_context=memory_context,
+        previous_comments=previous_comments,
+        changed_files=changed_files,
+        ci_context=ci_context,
     )
 
-    return _AgenticState(
+    state = _AgenticState(
         messages=messages,
-        valid_lines=valid_lines,
+        valid_lines=valid_lines or parse_diff_hunks(diff),
         existing_threads=existing_threads,
         all_posted=[],
         tool_ctx=tool_ctx,
         budget=budget,
     )
 
-
-def _handle_response(
-    response: LLMResponse,
-    state: _AgenticState,
-    iteration: int,
-) -> bool:
-    """Handle a single LLM response. Returns True if the loop should stop."""
-    state.budget.record(response.usage)
-
-    # Progress tracking
-    if not response.tool_calls and not response.content:
-        state.no_progress_streak += 1
-    else:
-        state.no_progress_streak = 0
-
-    if state.no_progress_streak >= _NO_PROGRESS_LIMIT:
-        print(f"[agentic] no progress for {_NO_PROGRESS_LIMIT} iterations, stopping")
-        return True
-
-    if response.tool_calls:
-        _append_assistant_tool_msg(state.messages, response)
-        for tc in response.tool_calls:
-            if _dispatch_tool_call(tc, state, iteration):
-                return True
-    elif response.content:
-        state.messages.append({"role": "assistant", "content": response.content})
-
-    return False
-
-
-def _run_agentic_review(
-    config: ReviewConfig,
-    diff: str,
-    pr_meta: PRMetadata,
-    pr: int,
-) -> ReviewResult:
-    """Run the agentic tool-use review loop with incremental posting.
-
-    Inline comments are posted to GitHub as they are found.  The returned
-    ``ReviewResult`` has ``comments=[]`` because they are already posted.
-    The caller should post only the summary with the final verdict.
-    """
-    state = _init_agentic_state(config, diff, pr_meta, pr)
+    timeout_retries = 0
+    tool_use_count = 0
+    premature_submit_warned = False
+    no_progress_streak = 0
 
     for iteration in range(config.max_iterations):
         if not state.budget.can_continue():
@@ -565,11 +663,148 @@ def _run_agentic_review(
                 config.model,
                 tools=TOOL_DEFINITIONS,
             )
+            timeout_retries = 0
+            if verbose:
+                _print_iteration(iteration, response)
+        except TimeoutError:
+            timeout_retries += 1
+            logger.warning(
+                "Agentic API timeout (attempt %d/%d)",
+                timeout_retries,
+                _MAX_TIMEOUT_RETRIES,
+            )
+            if timeout_retries > _MAX_TIMEOUT_RETRIES:
+                logger.warning("Too many timeouts, falling back to oneshot review")
+                return _run_oneshot_review(
+                    config, diff, pr_meta, pr, memory_context=memory_context
+                )
+            continue
         except RuntimeError:
-            logger.warning("Agentic API call failed, returning partial")
-            break
+            if state.all_posted:
+                logger.warning(
+                    "Agentic API call failed mid-loop; returning partial result"
+                )
+                verdict = "request_changes"
+                summary = _build_agentic_summary(state.all_posted, state.budget)
+                return ReviewResult(
+                    verdict=verdict,
+                    summary=summary,
+                    comments=[],
+                    model=config.model,
+                    pr=pr,
+                )
+            logger.warning("Agentic API call failed, falling back to oneshot review")
+            return _run_oneshot_review(
+                config, diff, pr_meta, pr, memory_context=memory_context
+            )
 
-        if _handle_response(response, state, iteration):
+        state.budget.record(response.usage)
+
+        # No tool calls — model returned content or nothing
+        if not response.tool_calls:
+            if response.content:
+                if response.finish_reason == "stop":
+                    logger.info(
+                        "Iter %d: content+stop without finish_review, nudging",
+                        iteration,
+                    )
+                    state.messages.append(
+                        {"role": "assistant", "content": response.content}
+                    )
+                    state.messages.append(_nudge_empty_stop())
+                    continue
+            else:
+                # Truly empty response (no content, no tool calls)
+                no_progress_streak += 1
+                logger.info(
+                    "Iter %d: empty response (finish_reason=%s), nudging (streak=%d)",
+                    iteration,
+                    response.finish_reason,
+                    no_progress_streak,
+                )
+                if no_progress_streak >= _NO_PROGRESS_LIMIT:
+                    logger.warning(
+                        "No progress after %d consecutive empty"
+                        " iterations; terminating",
+                        no_progress_streak,
+                    )
+                    break
+                state.messages.append(_nudge_empty_stop())
+            continue
+
+        _append_assistant_tool_msg(state.messages, response)
+        no_progress_streak = 0
+
+        done = False
+        for tc in response.tool_calls:
+            if tc.name == "finish_review":
+                print(f"[agentic] finish_review at iteration {iteration + 1}")
+                state.messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": "Review complete.",
+                    }
+                )
+                done = True
+                break
+
+            if tc.name == "post_comments":
+                # Check for premature finish (too few tool uses on large diff)
+                if (
+                    not premature_submit_warned
+                    and tool_use_count < _PREMATURE_SUBMIT_MIN_TOOLS
+                    and diff_lines > _PREMATURE_SUBMIT_DIFF_THRESHOLD
+                    and not state.all_posted
+                ):
+                    premature_submit_warned = True
+                    logger.info(
+                        "Premature post_comments after %d tool use(s)"
+                        " on %d-line diff; nudging",
+                        tool_use_count,
+                        diff_lines,
+                    )
+                    state.messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": (
+                                "Please investigate more thoroughly before posting. "
+                                "Use read_file() or search_code() first."
+                            ),
+                        }
+                    )
+                    state.messages.append(
+                        _nudge_premature_submit(tool_use_count, diff_lines)
+                    )
+                    break
+
+                new, feedback = _validate_and_post(
+                    tc.arguments,
+                    state.valid_lines,
+                    state.existing_threads,
+                    state.all_posted,
+                    state.tool_ctx,
+                )
+                state.all_posted.extend(new)
+                n_total = len(state.all_posted)
+                print(f"[agentic] posted {len(new)} comment(s) (total: {n_total})")
+                state.messages.append(
+                    {"role": "tool", "tool_call_id": tc.id, "content": feedback}
+                )
+                continue
+
+            tool_use_count += 1
+            tool_result = execute_tool(tc.name, tc.arguments, tool_ctx)
+            state.messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": tool_result,
+                }
+            )
+
+        if done:
             break
 
     verdict = "request_changes" if state.all_posted else "approve"

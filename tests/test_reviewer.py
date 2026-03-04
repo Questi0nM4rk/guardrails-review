@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 
+from guardrails_review.memory import FalsePositive, Memory, ResolutionStats
 from guardrails_review.parser import parse_response, parse_submit_review_args
 from guardrails_review.prompts import build_agentic_messages, build_messages
 from guardrails_review.reviewer import (
@@ -206,6 +207,53 @@ def test_validate_comments_splits_correctly():
     assert len(valid) == 1
     assert valid[0].line == 10
     assert len(invalid) == 2
+
+
+def test_validate_comments_multiline_both_lines_valid():
+    """Multi-line comment with both start_line and line in diff is valid."""
+    valid_lines = {"foo.py": {5, 6, 7, 8, 9, 10}}
+    comments = [
+        ReviewComment(path="foo.py", line=10, body="range", severity="error", start_line=5),
+    ]
+    valid, invalid = validate_comments(comments, valid_lines)
+
+    assert len(valid) == 1
+    assert len(invalid) == 0
+
+
+def test_validate_comments_multiline_start_line_outside_diff_is_invalid():
+    """Multi-line comment where start_line is outside diff is invalid."""
+    valid_lines = {"foo.py": {8, 9, 10}}  # lines 1-7 not in diff
+    comments = [
+        ReviewComment(path="foo.py", line=10, body="range", severity="error", start_line=5),
+    ]
+    valid, invalid = validate_comments(comments, valid_lines)
+
+    assert len(valid) == 0
+    assert len(invalid) == 1
+
+
+def test_validate_comments_multiline_end_line_outside_diff_is_invalid():
+    """Multi-line comment where end line (line) is outside diff is invalid."""
+    valid_lines = {"foo.py": {5, 6, 7}}  # lines 8-10 not in diff
+    comments = [
+        ReviewComment(path="foo.py", line=10, body="range", severity="error", start_line=5),
+    ]
+    valid, invalid = validate_comments(comments, valid_lines)
+
+    assert len(valid) == 0
+    assert len(invalid) == 1
+
+
+def test_validate_comments_no_start_line_behaves_as_before():
+    """Comments without start_line use only line for validation (unchanged behavior)."""
+    valid_lines = {"foo.py": {10}}
+    comments = [
+        ReviewComment(path="foo.py", line=10, body="single", severity="error"),
+    ]
+    valid, _invalid = validate_comments(comments, valid_lines)
+
+    assert len(valid) == 1
 
 
 def test_compute_verdict_comments_request_changes():
@@ -904,8 +952,8 @@ def test_run_resolve_failure_returns_1(monkeypatch, capsys):
     assert "Failed to fetch review threads" in captured.out
 
 
-def test_agentic_content_response_counts_as_progress(monkeypatch):
-    """Content-only response (no tool calls) resets no-progress streak."""
+def test_agentic_content_response_nudged(monkeypatch):
+    """Model returning content+stop gets nudged; if it then calls finish_review it completes."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n"
     pr_meta = _meta()
@@ -917,7 +965,7 @@ def test_agentic_content_response_counts_as_progress(monkeypatch):
         call_count["n"] += 1
         usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
         if call_count["n"] <= 2:
-            # Content response (no tool calls but has content)
+            # Content response (no tool calls but has content) — gets nudged
             return LLMResponse(
                 content="Thinking about the diff...",
                 tool_calls=[],
@@ -936,7 +984,7 @@ def test_agentic_content_response_counts_as_progress(monkeypatch):
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
 
     assert result.verdict == "approve"
-    assert call_count["n"] == 3  # 2 content + 1 finish (not terminated early)
+    assert call_count["n"] == 3  # 2 content (nudged) + 1 finish
 
 
 # --- _print_dry_run tests ---
@@ -1369,3 +1417,343 @@ def test_run_review_unresolved_threads_set_failure_status(tmp_path, monkeypatch)
     final_statuses = [s for s in captured["set_statuses"] if s[0] != "pending"]
     assert len(final_statuses) == 1
     assert final_statuses[0][0] == "failure"
+
+
+def test_run_review_loads_and_saves_memory(tmp_path, monkeypatch):
+    """run_review loads memory before review and saves it after posting."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
+
+    diff_text = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n+++ b/foo.py\n"
+        "@@ -1,1 +1,2 @@\n context\n+added\n"
+    )
+    pr_meta = _meta(head_ref_oid="sha1")
+    llm_response = json.dumps(
+        {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
+    )
+
+    fake_mem = Memory(
+        version=1,
+        repo="owner/repo",
+        false_positives=[],
+        conventions=["Uses gh CLI"],
+        resolution_stats=ResolutionStats(
+            total_threads=0, fixed=0, false_positive=0, wont_fix=0, avg_rounds_to_resolve=0.0
+        ),
+    )
+    saved_memories = []
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.post_review", lambda *a, **kw: True)
+    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
+    monkeypatch.setattr(f"{_REVIEWER}.load_memory", lambda owner, repo: fake_mem)
+
+    def _capture_save(mem):
+        saved_memories.append(mem)
+
+    monkeypatch.setattr(f"{_REVIEWER}.save_memory", _capture_save)
+
+    result = run_review(42, project_dir=tmp_path)
+
+    assert result == 0
+    assert len(saved_memories) == 1
+    assert saved_memories[0].repo == "owner/repo"
+
+
+def test_run_review_memory_context_injected_into_prompt(tmp_path, monkeypatch):
+    """Memory context is injected into LLM prompt when false positives exist."""
+    config_file = tmp_path / ".guardrails-review.toml"
+    config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
+
+    diff_text = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n+++ b/foo.py\n"
+        "@@ -1,1 +1,2 @@\n context\n+added\n"
+    )
+    pr_meta = _meta(head_ref_oid="sha1")
+    llm_response = json.dumps(
+        {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
+    )
+
+    fake_mem = Memory(
+        version=1,
+        repo="owner/repo",
+        false_positives=[
+            FalsePositive(
+                pattern="urllib for API",
+                rule="S605",
+                file_pattern="src/**/*.py",
+                occurrences=3,
+                first_seen="2026-01-01",
+                last_seen="2026-03-01",
+            )
+        ],
+        conventions=[],
+        resolution_stats=ResolutionStats(
+            total_threads=0, fixed=0, false_positive=0, wont_fix=0, avg_rounds_to_resolve=0.0
+        ),
+    )
+    captured_messages = []
+
+    def fake_openrouter(msgs, model):
+        captured_messages.extend(msgs)
+        return llm_response
+
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", fake_openrouter)
+    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
+    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.post_review", lambda *a, **kw: True)
+    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
+    monkeypatch.setattr(f"{_REVIEWER}.load_memory", lambda owner, repo: fake_mem)
+    monkeypatch.setattr(f"{_REVIEWER}.save_memory", lambda mem: None)
+
+    run_review(42, project_dir=tmp_path)
+
+    # The user message should contain the false positive pattern
+    user_msg = next(m for m in captured_messages if m["role"] == "user")
+    assert "urllib for API" in user_msg["content"]
+    assert "S605" in user_msg["content"]
+
+
+# --- New v2 tests ---
+
+
+def _make_submit_response(verdict: str = "approve") -> LLMResponse:
+    """Return a finish_review response (replaces old submit_review in v2 loop)."""
+    return LLMResponse(
+        content=None,
+        tool_calls=[
+            ToolCall(
+                id="submit1",
+                name="finish_review",
+                arguments="{}",
+            )
+        ],
+        finish_reason="tool_calls",
+        usage={"prompt_tokens": 20_000, "completion_tokens": 100},
+    )
+
+
+def test_agentic_empty_stop_injects_nudge_and_continues(monkeypatch):
+    """finish_reason=stop with no content/tool_calls -> nudge injected, loop continues."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
+    diff = "diff --git a/f.py b/f.py\n"
+    pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
+
+    call_count = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
+        if call_count["n"] == 1:
+            # Empty stop — no content, no tool calls
+            return LLMResponse(content=None, tool_calls=[], finish_reason="stop", usage=usage)
+        # Second call succeeds with finish_review
+        return _make_submit_response()
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    assert result.verdict == "approve"
+    assert call_count["n"] == 2
+
+
+def test_agentic_content_stop_injects_nudge(monkeypatch):
+    """finish_reason=stop with content -> nudge is injected, loop continues."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
+    diff = "diff --git a/f.py b/f.py\n"
+    pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
+
+    call_count = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
+        if call_count["n"] == 1:
+            # Content stop without tool call
+            return LLMResponse(
+                content="I found no issues.", tool_calls=[], finish_reason="stop", usage=usage
+            )
+        return _make_submit_response()
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    assert result.verdict == "approve"
+    assert call_count["n"] == 2
+
+
+def test_agentic_timeout_retries_then_falls_back(monkeypatch):
+    """TimeoutError repeated _MAX_TIMEOUT_RETRIES+1 times -> oneshot fallback."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
+    diff = (
+        "diff --git a/f.py b/f.py\n"
+        "--- a/f.py\n+++ b/f.py\n"
+        "@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+    )
+    pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
+
+    def fake_call_tools(messages, model, *, tools, tool_choice=None):
+        raise TimeoutError("timed out")
+
+    def fake_oneshot(messages, model):
+        return json.dumps(
+            {
+                "verdict": "approve",
+                "summary": "<!-- guardrails-review -->\nOneshot",
+                "comments": [],
+            }
+        )
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call_tools)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", fake_oneshot)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    assert result.verdict == "approve"
+    assert "Oneshot" in result.summary
+
+
+def test_agentic_timeout_retry_succeeds(monkeypatch):
+    """Single TimeoutError followed by success -> completes normally."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
+    diff = "diff --git a/f.py b/f.py\n"
+    pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
+
+    call_count = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise TimeoutError("timed out")
+        return _make_submit_response()
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    assert result.verdict == "approve"
+    assert call_count["n"] == 2
+
+
+def _make_large_diff(n_lines: int) -> str:
+    """Build a fake diff with n_lines of additions."""
+    header = (
+        "diff --git a/f.py b/f.py\n"
+        "--- a/f.py\n+++ b/f.py\n"
+        f"@@ -1,1 +1,{n_lines} @@\n"
+    )
+    return header + "".join(f"+line{i}\n" for i in range(1, n_lines + 1))
+
+
+def test_agentic_premature_post_comments_nudges_on_large_diff(monkeypatch):
+    """post_comments after 0 tool uses on 200-line diff -> nudge injected."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
+    diff = _make_large_diff(200)
+    pr_meta = _meta(head_ref_oid="sha123")
+    _stub_agentic_deps(monkeypatch)
+
+    call_count = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
+        if call_count["n"] == 1:
+            # post_comments with 0 prior tool uses -> should nudge
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="post_comments",
+                        arguments=json.dumps({"comments": []}),
+                    )
+                ],
+                finish_reason="tool_calls",
+                usage=usage,
+            )
+        return _make_submit_response()
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    # Should have looped at least twice (first was nudged, second finish_review accepted)
+    assert call_count["n"] >= 2
+    assert result.verdict == "approve"
+
+
+def test_agentic_premature_post_comments_accepted_on_small_diff(monkeypatch):
+    """post_comments on small diff -> no nudge (threshold not crossed)."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
+    diff = _make_large_diff(50)  # below threshold
+    pr_meta = _meta(head_ref_oid="sha123")
+    _stub_agentic_deps(monkeypatch)
+
+    call_count = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
+        if call_count["n"] == 1:
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="post_comments",
+                        arguments=json.dumps({"comments": []}),
+                    )
+                ],
+                finish_reason="tool_calls",
+                usage=usage,
+            )
+        return _make_submit_response()
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    # Small diff -> no nudge on post_comments -> continues to finish
+    assert result.verdict == "approve"
+    assert call_count["n"] == 2
+
+
+def test_agentic_finish_review_always_accepted(monkeypatch):
+    """finish_review is always accepted without nudge regardless of tool use count."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
+    diff = _make_large_diff(200)
+    pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
+
+    call_count = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        return _make_submit_response()
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    # finish_review accepted on first call without nudge
+    assert call_count["n"] == 1
+    assert result.verdict == "approve"

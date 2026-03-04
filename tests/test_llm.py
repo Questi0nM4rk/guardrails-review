@@ -273,6 +273,22 @@ def test_tool_choice_parameter(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "response_format" not in body
 
 
+def test_send_request_catches_bare_timeout_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """urlopen raising bare TimeoutError is re-raised as TimeoutError."""
+    monkeypatch.setenv("OPENROUTER_KEY", "sk-test-key")
+
+    def fake_urlopen(*_args: Any, **_kwargs: Any) -> None:
+        raise TimeoutError("connection timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        call_openrouter(
+            messages=[{"role": "user", "content": "hi"}],
+            model="test-model",
+        )
+
+
 def test_tools_disables_json_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tools omit response_format even with json_mode=True."""
     monkeypatch.setenv("OPENROUTER_KEY", "sk-test-key")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import logging
 import re
 from typing import TYPE_CHECKING, Any
@@ -10,7 +11,12 @@ from typing import TYPE_CHECKING, Any
 from guardrails_review.github import run_gh
 
 if TYPE_CHECKING:
-    from guardrails_review.types import PRMetadata, ReviewConfig
+    from guardrails_review.types import (
+        PathInstruction,
+        PRMetadata,
+        ReviewConfig,
+        ReviewThread,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +29,8 @@ You are a pedantic defect detector. Review the PR diff and return ONLY valid JSO
   "comments": [
     {
       "path": "relative/file/path",
-      "line": <line number in new file>,
+      "line": <end line number in new file>,
+      "start_line": <start line for multi-line comments, optional>,
       "body": "description of the defect"
     }
   ]
@@ -51,46 +58,152 @@ Rules:
 """
 
 _AGENTIC_SYSTEM_PROMPT = """\
-You are a pedantic defect detector with tools to explore the codebase.
+You are the last line of defense for a human-maintained codebase against AI-generated
+code rot. Your job is not just to find bugs — it is to protect the codebase.
 
-**Workflow:**
-1. Start with list_changed_files() to see the scope
-2. Read the diff carefully — most defects are visible in the diff alone
-3. Use read_file() ONLY for files where you need surrounding context to confirm a bug
-4. Use search_code() ONLY when you need to verify callers or contracts
-5. Use post_comments() to post findings IMMEDIATELY as you find them — do not accumulate
-6. Call finish_review() when you have no more files to investigate
+AI agents produce code that is often locally correct but globally harmful: duplicated
+logic, unnecessary abstraction layers, convoluted indirection, and pattern-matched
+structures copied from the training corpus. Left unchecked, this accumulates into an
+unmaintainable system. You are the gatekeeper. Reject it.
 
-**IMPORTANT:** Post findings as you go. Do not wait until the end. Each call to \
-post_comments() posts inline comments to the PR immediately. Your budget status \
-will be shown each iteration — when warned to wrap up, finish outstanding files \
-and call finish_review().
+When in doubt, request changes. A false positive that slows one PR is cheap.
+Missed rot that degrades the codebase for years is not.
 
-**ONLY report these defect categories:**
-- Bugs and logic errors
-- Security vulnerabilities
-- Data races and concurrency issues
-- Resource leaks (file handles, connections, memory)
-- Unhandled error paths (missing error checks, swallowed exceptions)
-- API contract violations (wrong types, missing required fields, broken invariants)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MANDATORY: You MUST call finish_review() as your final action.
+Never output text and stop. Never say "LGTM" and return.
+The ONLY valid exit from this review is calling finish_review().
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**Do NOT report:**
-- Style, formatting, or naming
-- "Consider doing X" suggestions
-- Missing tests or documentation
-- Performance unless it's a clear algorithmic bug
+## Workflow
 
-Rules:
-- Line numbers reference the new file (right side of diff)
-- Only comment on lines within diff hunks
-- Include <!-- guardrails-review --> at the start of each comment body\
+1. Call think() first. Write down: what changed, what the risk areas are, and what
+   context you need to gather before you can form a verdict.
+
+2. Read the diff. Line numbers are embedded as LINE_N: — use these exact numbers
+   in your comments. Only comment on lines that appear in the diff hunks.
+
+3. Gather context using your tools:
+   - list_changed_files() — understand the scope of the PR
+   - read_file(path, start_line, end_line) — see the full function/class around a change
+   - search_code(query) — find callers, related code, or duplicate logic elsewhere
+     in the codebase. For every non-trivial function added, search for similar patterns.
+
+4. Use at least 2-3 tool calls after think() before finishing, unless the diff is
+   trivially small (< 20 lines with no logic changes).
+
+5. Use post_comments() to post findings IMMEDIATELY as you find them — do not
+   accumulate. Each call to post_comments() posts inline comments to the PR
+   immediately. Your budget status will be shown each iteration — when warned to
+   wrap up, finish outstanding files and call finish_review().
+
+6. Call finish_review() when you have no more files to investigate.
+
+## Defect categories — standard
+
+Report ONLY these. Each comment must cite a specific line and explain the concrete
+failure mode (what will break, when, how).
+
+- **Bugs and logic errors**: incorrect conditions, off-by-one, wrong operator, missing
+  branch, incorrect algorithm
+- **Security vulnerabilities**: injection (SQL, shell, path, LDAP), SSRF, XSS, CSRF,
+  broken access control, unsafe deserialization, insecure direct object reference
+- **Concurrency and data races**: unsynchronized shared state, TOCTOU, missing locks,
+  double-checked locking broken without volatile/atomic
+- **Resource leaks**: file handles, DB connections, sockets, memory not released on
+  error paths
+- **Unhandled error paths**: exceptions swallowed silently, missing null/None checks
+  before dereference, missing error returns checked by callers
+- **API contract violations**: wrong argument types, missing required fields, broken
+  invariants, calling deprecated/removed methods
+
+## Defect categories — AI-generated code (check these carefully)
+
+AI agents produce characteristic failure patterns. Prioritize:
+
+- **Hallucinated APIs**: calls to library methods, attributes, or modules that do not
+  exist in the imported package version. Check: does this method/attribute actually
+  exist? Is the import correct?
+- **Unnecessary abstractions**: factory classes, plugin registries, base classes, or
+  strategy patterns introduced for single-use cases. The right question: could this
+  be a plain function? If yes, the abstraction is waste and increases failure surface.
+- **Missing idempotency**: code that produces duplicate side effects on re-run —
+  INSERT without ON CONFLICT, file creation without existence check, API calls without
+  deduplication keys. AI code is often run multiple times during iteration.
+- **Copy-paste insecurity**: SQL built by string concatenation, shell commands with
+  f-string interpolation, template reuse from an insecure example. AI models
+  pattern-match from training data that includes vulnerable examples.
+- **Hardcoded secrets**: API keys, passwords, tokens, private keys, connection strings
+  embedded literally in source. Grep the diff for anything that looks like a secret.
+- **Weak or broken cryptography**: MD5/SHA1 for security-sensitive hashing, ECB mode,
+  small key sizes, predictable RNG (random.random() for tokens), self-signed cert
+  acceptance, disabled TLS verification.
+- **Missing input validation at trust boundaries**: functions that accept user-supplied
+  or external data without validating length, format, range, or type before use.
+  AI models often omit validation when prototyping.
+- **Over-scoped permissions**: requesting admin/root/wildcard permissions when a
+  narrower scope would suffice. AI agents tend to request broad access for convenience.
+- **Code duplication**: Logic that already exists elsewhere in the codebase,
+  copy-pasted or near-duplicated. Use search_code to check. If the same non-trivial
+  operation exists in 2+ places, report the lines in the diff and cite where the
+  duplicate lives. AI agents reinvent rather than reuse because they lack full
+  codebase awareness — this is their most damaging failure pattern.
+- **Unnecessary complexity**: Code harder to read or reason about than the problem
+  requires. Report: more than 3 levels of nesting for a simple operation; chains of
+  transformations that could be a single expression; classes or methods whose only
+  purpose is to wrap a single function call; runtime indirection (dispatch tables,
+  plugin registries, abstract factories) for behaviour that never varies. Ask: could
+  a competent engineer write this in half the lines with equal correctness? If yes,
+  report it.
+
+## Do NOT report
+
+- Style, formatting, naming, line length, comment density
+- Missing tests or missing documentation
+- Type annotation gaps (unless they mask a runtime bug)
+- Performance, unless it is a clear algorithmic bug (e.g. O(n²) in a hot loop with
+  evidence this is a hot loop)
+- Issues that already appear in "Existing Unresolved Review Comments" (see below)
+
+## Line number rules
+
+- The diff embeds right-side line numbers as LINE_N: prefixes
+- Only use line numbers from the diff — do not invent or estimate line numbers
+- For multi-line issues, use start_line (first line) and line (last line)
+- Do not post comments on lines that are not in the diff hunks
+
+## Summary format
+
+Start your review summary with the HTML comment: <!-- guardrails-review -->
+Then give a 1-3 sentence assessment of the PR risk level and what you found.\
 """
 
 
-def _build_user_content(
+def _match_path_instructions(
+    changed_files: list[str],
+    path_instructions: list[PathInstruction],
+) -> list[PathInstruction]:
+    """Return path instructions whose glob matches at least one changed file.
+
+    Normalises ``**`` → ``*`` before matching because fnmatch's ``*`` already
+    matches path separators, making ``**`` redundant but potentially confusing.
+    """
+    matched = []
+    for pi in path_instructions:
+        # Collapse consecutive wildcards so "tests/**" behaves like "tests/*"
+        normalized = pi.path.replace("**", "*")
+        if any(fnmatch.fnmatch(f, normalized) for f in changed_files):
+            matched.append(pi)
+    return matched
+
+
+def _build_user_content(  # noqa: PLR0913
     diff: str,
     config: ReviewConfig,
     pr_meta: PRMetadata,
+    memory_context: str = "",
+    previous_comments: list[ReviewThread] | None = None,
+    changed_files: list[str] | None = None,
     *,
     ci_context: str = "",
 ) -> str:
@@ -104,9 +217,44 @@ def _build_user_content(
         "",
         diff[: config.max_diff_chars],
     ]
+
+    # Inject matched path instructions before diff
+    matched_pi = _match_path_instructions(
+        changed_files or [],
+        config.path_instructions,
+    )
+    if matched_pi:
+        pi_lines = ["## Path-Specific Review Rules", ""]
+        for pi in matched_pi:
+            pi_lines.append(f"### Files matching `{pi.path}`")
+            pi_lines.append(pi.instructions)
+            pi_lines.append("")
+        parts = [*pi_lines, *parts]
+
+    # Inject previous unresolved comments before diff
+    if previous_comments:
+        marker = "<!-- guardrails-review -->"
+        comment_lines = [
+            "## Existing Unresolved Review Comments (do not repeat these)",
+            "",
+        ]
+        for t in previous_comments:
+            body_stripped = t.body.replace(marker, "").strip()
+            body_short = body_stripped[:120]
+            line_ref = f"{t.path}:{t.line}" if t.line is not None else t.path
+            comment_lines.append(f"- `{line_ref}` — {body_short}")
+        comment_lines.append("")
+        parts = [*comment_lines, *parts]
+
     if config.extra_instructions:
         parts = [
             f"## Project-specific instructions\n\n{config.extra_instructions}",
+            "",
+            *parts,
+        ]
+    if memory_context:
+        parts = [
+            f"## Project Memory\n\n{memory_context}",
             "",
             *parts,
         ]
@@ -120,18 +268,25 @@ def build_messages(
     diff: str,
     config: ReviewConfig,
     pr_meta: PRMetadata,
+    memory_context: str = "",
 ) -> list[dict[str, str]]:
     """Build the message list for the LLM call."""
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": _build_user_content(diff, config, pr_meta)},
+        {
+            "role": "user",
+            "content": _build_user_content(diff, config, pr_meta, memory_context),
+        },
     ]
 
 
-def build_agentic_messages(
+def build_agentic_messages(  # noqa: PLR0913
     diff: str,
     config: ReviewConfig,
     pr_meta: PRMetadata,
+    memory_context: str = "",
+    previous_comments: list[ReviewThread] | None = None,
+    changed_files: list[str] | None = None,
     *,
     ci_context: str = "",
 ) -> list[dict[str, Any]]:
@@ -141,7 +296,13 @@ def build_agentic_messages(
         {
             "role": "user",
             "content": _build_user_content(
-                diff, config, pr_meta, ci_context=ci_context
+                diff,
+                config,
+                pr_meta,
+                memory_context,
+                previous_comments=previous_comments,
+                changed_files=changed_files,
+                ci_context=ci_context,
             ),
         },
     ]

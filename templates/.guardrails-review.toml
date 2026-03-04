@@ -6,8 +6,8 @@ model = "" # REQUIRED — e.g. "minimax/minimax-m2.5", "anthropic/claude-sonnet-
 
 [review]
 # max_diff_chars = 120000
-agentic = true # Enable tool-use loop for context-gathering before review
-# max_iterations = 5    # Max tool-use rounds before forcing review submission
+agentic = true          # Enable tool-use loop for context-gathering before review
+# max_iterations = 10   # Max tool-use rounds before forcing review submission
 
 extra_instructions = """
 Focus areas:
@@ -15,3 +15,23 @@ Focus areas:
 - Logic bugs and missing error handling
 - Type safety and null checks
 """
+
+# Path-specific review instructions (optional)
+# Each entry adds extra guidance for files matching a glob pattern.
+#
+# [[review.path_instructions]]
+# path = "src/auth/**/*.py"
+# instructions = """
+# Pay extra attention to authentication logic:
+# - Check for missing permission checks before sensitive operations
+# - Ensure tokens are validated before use, not just decoded
+# - Look for hardcoded credentials or weak secret generation
+# """
+#
+# [[review.path_instructions]]
+# path = "**/*.sql"
+# instructions = "Check for SQL injection via string concatenation or f-string interpolation."
+#
+# [[review.path_instructions]]
+# path = "migrations/**"
+# instructions = "Ensure migrations are reversible and idempotent. Check for missing ON CONFLICT clauses."
