@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import io
 import json
-import urllib.error
-import urllib.request
 from typing import Any
 from unittest.mock import MagicMock
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -15,17 +15,20 @@ from guardrails_review.llm import call_openrouter, call_openrouter_tools
 
 
 def _make_response(
-    content: str,
-    tool_calls: list | None = None,
+    content: str | None,
+    tool_calls: list[Any] | None = None,
     finish_reason: str = "stop",
+    usage: dict[str, int] | None = None,
 ) -> io.BytesIO:
     """Build a fake HTTP response body matching OpenRouter's format."""
     message: dict[str, Any] = {"content": content}
     if tool_calls is not None:
         message["tool_calls"] = tool_calls
-    payload = {
+    payload: dict[str, Any] = {
         "choices": [{"message": message, "finish_reason": finish_reason}],
     }
+    if usage is not None:
+        payload["usage"] = usage
     return io.BytesIO(json.dumps(payload).encode())
 
 
@@ -71,7 +74,7 @@ def test_call_openrouter_json_mode(monkeypatch: pytest.MonkeyPatch) -> None:
         json_mode=True,
     )
 
-    body = json.loads(captured_req[0].data)
+    body = json.loads(captured_req[0].data)  # type: ignore[arg-type]
     assert "response_format" in body
     assert body["response_format"] == {"type": "json_object"}
 
@@ -93,7 +96,7 @@ def test_call_openrouter_no_json_mode(monkeypatch: pytest.MonkeyPatch) -> None:
         json_mode=False,
     )
 
-    body = json.loads(captured_req[0].data)
+    body = json.loads(captured_req[0].data)  # type: ignore[arg-type]
     assert "response_format" not in body
 
 
@@ -117,7 +120,7 @@ def test_call_openrouter_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
             url="https://openrouter.ai/api/v1/chat/completions",
             code=429,
             msg="Too Many Requests",
-            hdrs=MagicMock(),  # type: ignore[arg-type]
+            hdrs=MagicMock(),
             fp=io.BytesIO(b'{"error": "rate limited"}'),
         )
 
@@ -147,7 +150,9 @@ def test_call_openrouter_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
-def test_call_openrouter_urlerror_non_timeout_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_call_openrouter_urlerror_non_timeout_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Non-timeout URLError is re-raised as-is (not wrapped in TimeoutError)."""
     monkeypatch.setenv("OPENROUTER_KEY", "sk-test-key")
 
@@ -188,7 +193,7 @@ def test_call_openrouter_sends_correct_headers(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_call_with_tools_returns_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the model returns tool_calls, LLMResponse contains parsed ToolCall objects."""
+    """LLMResponse contains parsed ToolCall objects from model response."""
     monkeypatch.setenv("OPENROUTER_KEY", "sk-test-key")
 
     tool_calls_data = [
@@ -201,7 +206,9 @@ def test_call_with_tools_returns_tool_calls(monkeypatch: pytest.MonkeyPatch) -> 
             },
         },
     ]
-    fake_resp = _make_response(None, tool_calls=tool_calls_data, finish_reason="tool_calls")
+    fake_resp = _make_response(
+        None, tool_calls=tool_calls_data, finish_reason="tool_calls"
+    )
     monkeypatch.setattr(urllib.request, "urlopen", _stub_urlopen(fake_resp))
 
     tools = [{"type": "function", "function": {"name": "read_file", "parameters": {}}}]
@@ -250,7 +257,9 @@ def test_tool_choice_parameter(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
     forced_choice = {"type": "function", "function": {"name": "submit_review"}}
-    tools = [{"type": "function", "function": {"name": "submit_review", "parameters": {}}}]
+    tools = [
+        {"type": "function", "function": {"name": "submit_review", "parameters": {}}}
+    ]
     call_openrouter_tools(
         messages=[{"role": "user", "content": "hi"}],
         model="test-model",
@@ -258,7 +267,7 @@ def test_tool_choice_parameter(monkeypatch: pytest.MonkeyPatch) -> None:
         tool_choice=forced_choice,
     )
 
-    body = json.loads(captured_req[0].data)
+    body = json.loads(captured_req[0].data)  # type: ignore[arg-type]
     assert body["tool_choice"] == forced_choice
     assert "tools" in body
     assert "response_format" not in body
@@ -281,7 +290,7 @@ def test_send_request_catches_bare_timeout_error(monkeypatch: pytest.MonkeyPatch
 
 
 def test_tools_disables_json_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tools provided via call_openrouter omit response_format even with json_mode=True."""
+    """Tools omit response_format even with json_mode=True."""
     monkeypatch.setenv("OPENROUTER_KEY", "sk-test-key")
     captured_req: list[urllib.request.Request] = []
 
@@ -299,6 +308,46 @@ def test_tools_disables_json_mode(monkeypatch: pytest.MonkeyPatch) -> None:
         tools=tools,
     )
 
-    body = json.loads(captured_req[0].data)
+    body = json.loads(captured_req[0].data)  # type: ignore[arg-type]
     assert "response_format" not in body
     assert "tools" in body
+
+
+# --- Usage parsing ---
+
+
+def test_call_openrouter_tools_parses_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLMResponse.usage is populated from the OpenRouter response."""
+    monkeypatch.setenv("OPENROUTER_KEY", "sk-test-key")
+
+    usage = {"prompt_tokens": 1234, "completion_tokens": 567}
+    fake_resp = _make_response("review text", usage=usage)
+    monkeypatch.setattr(urllib.request, "urlopen", _stub_urlopen(fake_resp))
+
+    tools = [{"type": "function", "function": {"name": "read_file", "parameters": {}}}]
+    result = call_openrouter_tools(
+        messages=[{"role": "user", "content": "review"}],
+        model="test-model",
+        tools=tools,
+    )
+
+    assert result.usage == {"prompt_tokens": 1234, "completion_tokens": 567}
+
+
+def test_call_openrouter_tools_missing_usage_defaults_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLMResponse.usage defaults to empty dict when no usage in response."""
+    monkeypatch.setenv("OPENROUTER_KEY", "sk-test-key")
+
+    fake_resp = _make_response("review text")  # no usage
+    monkeypatch.setattr(urllib.request, "urlopen", _stub_urlopen(fake_resp))
+
+    tools = [{"type": "function", "function": {"name": "read_file", "parameters": {}}}]
+    result = call_openrouter_tools(
+        messages=[{"role": "user", "content": "review"}],
+        model="test-model",
+        tools=tools,
+    )
+
+    assert result.usage == {}

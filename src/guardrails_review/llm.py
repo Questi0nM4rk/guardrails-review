@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 import urllib.error
 import urllib.request
-from typing import Any
 
 from guardrails_review.types import LLMResponse, ToolCall
 
@@ -74,10 +74,12 @@ def call_openrouter_tools(
         RuntimeError: On HTTP error responses.
         TimeoutError: When the request times out.
     """
-    return _send_request(messages, model, json_mode=False, tools=tools, tool_choice=tool_choice)
+    return _send_request(
+        messages, model, json_mode=False, tools=tools, tool_choice=tool_choice
+    )
 
 
-def _send_request(
+def _send_request(  # noqa: PLR0915
     messages: list[dict[str, Any]],
     model: str,
     *,
@@ -104,7 +106,7 @@ def _send_request(
 
     data = json.dumps(body).encode()
 
-    req = urllib.request.Request(  # noqa: S310 — URL is a hardcoded HTTPS constant
+    req = urllib.request.Request(
         _OPENROUTER_URL,
         data=data,
         headers={
@@ -115,7 +117,9 @@ def _send_request(
     )
 
     try:
-        resp = urllib.request.urlopen(req, timeout=_TIMEOUT_SECONDS)  # noqa: S310
+        resp = urllib.request.urlopen(  # nosec B310  # nosemgrep
+            req, timeout=_TIMEOUT_SECONDS
+        )
     except urllib.error.HTTPError as exc:
         resp_body = exc.read().decode(errors="replace")
         msg = f"OpenRouter API error {exc.code}: {resp_body}"
@@ -130,10 +134,14 @@ def _send_request(
         raise TimeoutError(msg) from exc
 
     response_data = json.loads(resp.read().decode())
-    return _parse_response(response_data)
+    usage: dict[str, int] = response_data.get("usage", {})
+    return _parse_response(response_data, usage)
 
 
-def _parse_response(response_data: dict[str, Any]) -> LLMResponse:
+def _parse_response(
+    response_data: dict[str, Any],
+    usage: dict[str, int] | None = None,
+) -> LLMResponse:
     """Parse OpenRouter response JSON into an LLMResponse."""
     choice = response_data["choices"][0]
     message = choice["message"]
@@ -155,4 +163,5 @@ def _parse_response(response_data: dict[str, Any]) -> LLMResponse:
         content=content,
         tool_calls=tool_calls,
         finish_reason=finish_reason,
+        usage=usage or {},
     )

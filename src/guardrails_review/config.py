@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
+import tomllib
 from typing import Any
 
 from guardrails_review.types import PathInstruction, ReviewConfig
@@ -51,7 +51,7 @@ def load_config(project_dir: Path | None = None) -> ReviewConfig:
         extra_instructions=review_section.get("extra_instructions", ""),
         max_diff_chars=review_section.get("max_diff_chars", 120_000),
         agentic=review_section.get("agentic", True),
-        max_iterations=review_section.get("max_iterations", 10),
+        max_iterations=review_section.get("max_iterations", 30),
         path_instructions=path_instructions,
     )
 

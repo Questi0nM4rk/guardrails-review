@@ -1,0 +1,137 @@
+# EditorConfig - Strict, Consistent Formatting
+# https://editorconfig.org
+# Copy to project root as .editorconfig
+
+root = true
+
+# =============================================================================
+# Global defaults - Apply to ALL files
+# =============================================================================
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+max_line_length = 100
+
+# =============================================================================
+# Language-specific overrides
+# =============================================================================
+
+# C# / .NET
+[*.{cs,csx,vb}]
+indent_size = 4
+max_line_length = 120
+
+# C# formatting (Roslyn analyzers respect these)
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = true
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_space_after_cast = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_between_method_declaration_parameter_list_parentheses = false
+csharp_space_between_method_call_parameter_list_parentheses = false
+csharp_preserve_single_line_statements = false
+csharp_preserve_single_line_blocks = true
+
+# C# naming conventions
+dotnet_naming_rule.public_members_must_be_capitalized.symbols = public_symbols
+dotnet_naming_rule.public_members_must_be_capitalized.style = pascal_case_style
+dotnet_naming_rule.public_members_must_be_capitalized.severity = error
+dotnet_naming_symbols.public_symbols.applicable_kinds = property,method,field,event,delegate
+dotnet_naming_symbols.public_symbols.applicable_accessibilities = public,internal
+dotnet_naming_style.pascal_case_style.capitalization = pascal_case
+
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_prefix
+dotnet_naming_rule.private_fields_underscore.severity = error
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.underscore_prefix.capitalization = camel_case
+dotnet_naming_style.underscore_prefix.required_prefix = _
+
+# C/C++
+[*.{c,h,cpp,hpp,cc,cxx,hxx}]
+indent_size = 4
+max_line_length = 100
+
+# Rust
+[*.rs]
+indent_size = 4
+max_line_length = 100
+
+# Python
+[*.{py,pyi}]
+indent_size = 4
+max_line_length = 88
+
+# JavaScript/TypeScript
+[*.{js,jsx,ts,tsx,mjs,cjs}]
+indent_size = 2
+max_line_length = 100
+
+# JSON/YAML/TOML
+[*.{json,jsonc,json5}]
+indent_size = 2
+
+[*.{yaml,yml}]
+indent_size = 2
+
+[*.toml]
+indent_size = 2
+
+# Lua
+[*.lua]
+indent_size = 2
+max_line_length = 120
+
+# Shell scripts
+[*.{sh,bash,zsh}]
+indent_size = 2
+max_line_length = 100
+
+# Markdown
+[*.{md,mdx}]
+trim_trailing_whitespace = false
+max_line_length = 80
+
+# Makefiles MUST use tabs
+[Makefile]
+indent_style = tab
+indent_size = 4
+
+[*.mk]
+indent_style = tab
+indent_size = 4
+
+# XML/HTML
+[*.{xml,html,htm,xhtml,csproj,props,targets,fsproj,vbproj}]
+indent_size = 2
+
+# CSS/SCSS
+[*.{css,scss,sass,less}]
+indent_size = 2
+
+# Go
+[*.go]
+indent_style = tab
+indent_size = 4
+
+# SQL
+[*.sql]
+indent_size = 2
+
+# Docker
+[Dockerfile*]
+indent_size = 4
+
+# Git
+[.git*]
+indent_size = 2

@@ -94,7 +94,8 @@ def test_build_agentic_messages_uses_agentic_prompt():
 
     assert len(messages) == 2
     assert "tools" in messages[0]["content"].lower()
-    assert "submit_review" in messages[0]["content"]
+    assert "post_comments" in messages[0]["content"]
+    assert "finish_review" in messages[0]["content"]
 
 
 def test_parse_response_valid_json():
@@ -303,13 +304,17 @@ def test_run_review_dry_run(tmp_path, monkeypatch, capsys):
         }
     )
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda _pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: pr_meta)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.call_openrouter", lambda _msgs, _model: llm_response
+    )
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
-    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
-    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads", lambda _pr, _owner, _repo: []
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda _pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda _tid: True)
 
     result = run_review(53, dry_run=True, project_dir=tmp_path)
 
@@ -340,17 +345,19 @@ def test_run_review_posts_and_caches(tmp_path, monkeypatch):
 
     posted = []
     statuses = []
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda _pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: pr_meta)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.call_openrouter", lambda _msgs, _model: llm_response
+    )
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(
         f"{_REVIEWER}.post_review",
-        lambda pr, result, owner, repo, sha: posted.append(result) or True,
+        lambda _pr, result, _owner, _repo, _sha: posted.append(result) or True,
     )
     monkeypatch.setattr(
         f"{_REVIEWER}.set_commit_status",
-        lambda *a, **kw: statuses.append(a),
+        lambda *_a, **_kw: statuses.append(_a),
     )
 
     result = run_review(53, project_dir=tmp_path)
@@ -378,21 +385,27 @@ def test_run_review_sets_commit_status(tmp_path, monkeypatch):
     )
     pr_meta = _meta(title="Test", body="desc", head_ref_oid="abc123")
     llm_response = json.dumps(
-        {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
+        {
+            "verdict": "approve",
+            "summary": "<!-- guardrails-review -->\nLGTM",
+            "comments": [],
+        }
     )
 
     statuses = []
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda _pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: pr_meta)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.call_openrouter", lambda _msgs, _model: llm_response
+    )
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(
         f"{_REVIEWER}.post_review",
-        lambda pr, result, owner, repo, sha: True,
+        lambda _pr, _result, _owner, _repo, _sha: True,
     )
     monkeypatch.setattr(
         f"{_REVIEWER}.set_commit_status",
-        lambda owner, repo, sha, state, desc: statuses.append((state, desc)),
+        lambda _owner, _repo, _sha, state, desc: statuses.append((state, desc)),
     )
 
     run_review(53, project_dir=tmp_path)
@@ -414,16 +427,22 @@ def test_run_review_status_failure_does_not_block(tmp_path, monkeypatch, capsys)
     )
     pr_meta = _meta(title="Test", body="desc", head_ref_oid="abc123")
     llm_response = json.dumps(
-        {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
+        {
+            "verdict": "approve",
+            "summary": "<!-- guardrails-review -->\nLGTM",
+            "comments": [],
+        }
     )
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda _pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: pr_meta)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.call_openrouter", lambda _msgs, _model: llm_response
+    )
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(
         f"{_REVIEWER}.post_review",
-        lambda pr, result, owner, repo, sha: True,
+        lambda _pr, _result, _owner, _repo, _sha: True,
     )
 
     def failing_status(*_args, **_kwargs):
@@ -449,20 +468,28 @@ def test_run_review_dry_run_skips_status(tmp_path, monkeypatch, capsys):
     )
     pr_meta = _meta(title="Test", body="desc", head_ref_oid="abc123")
     llm_response = json.dumps(
-        {"verdict": "approve", "summary": "<!-- guardrails-review -->\nLGTM", "comments": []}
+        {
+            "verdict": "approve",
+            "summary": "<!-- guardrails-review -->\nLGTM",
+            "comments": [],
+        }
     )
 
     statuses = []
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda _pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: pr_meta)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.call_openrouter", lambda _msgs, _model: llm_response
+    )
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
-    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
-    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads", lambda _pr, _owner, _repo: []
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda _pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda _tid: True)
     monkeypatch.setattr(
         f"{_REVIEWER}.set_commit_status",
-        lambda *a, **kw: statuses.append(a),
+        lambda *_a, **_kw: statuses.append(_a),
     )
 
     result = run_review(53, dry_run=True, project_dir=tmp_path)
@@ -486,19 +513,28 @@ def test_run_review_invalid_lines_in_summary(tmp_path, monkeypatch, capsys):
             "verdict": "approve",
             "summary": "<!-- guardrails-review -->\nLooks good",
             "comments": [
-                {"path": "foo.py", "line": 999, "severity": "info", "body": "Out of range"},
+                {
+                    "path": "foo.py",
+                    "line": 999,
+                    "severity": "info",
+                    "body": "Out of range",
+                },
             ],
         }
     )
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda _pr: diff_text)
     pr_meta = _meta()
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: pr_meta)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.call_openrouter", lambda _msgs, _model: llm_response
+    )
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
-    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
-    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads", lambda _pr, _owner, _repo: []
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda _pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda _tid: True)
 
     result = run_review(53, dry_run=True, project_dir=tmp_path)
 
@@ -514,7 +550,8 @@ def test_oneshot_still_works(tmp_path, monkeypatch, capsys):
     config_file.write_text('[config]\nmodel = "test/m"\n[review]\nagentic = false\n')
 
     diff_text = (
-        "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+        "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n"
+        "@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
     )
     llm_response = json.dumps(
         {
@@ -524,13 +561,17 @@ def test_oneshot_still_works(tmp_path, monkeypatch, capsys):
         }
     )
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: _meta())
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda _pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: _meta())
+    monkeypatch.setattr(
+        f"{_REVIEWER}.call_openrouter", lambda _msgs, _model: llm_response
+    )
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: [])
-    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
-    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads", lambda _pr, _owner, _repo: []
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda _pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda _tid: True)
 
     result = run_review(1, dry_run=True, project_dir=tmp_path)
 
@@ -543,65 +584,39 @@ def test_oneshot_still_works(tmp_path, monkeypatch, capsys):
 # --- Agentic review tests ---
 
 
-def test_agentic_loop_calls_tools_then_submits(monkeypatch):
-    """Agentic loop executes tools then processes submit_review to produce ReviewResult."""
-    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
-    diff = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
-    pr_meta = _meta(head_ref_oid="sha123")
-
-    call_count = {"n": 0}
-
-    def fake_call_openrouter_tools(messages, model, *, tools, tool_choice=None):
-        call_count["n"] += 1
-        if call_count["n"] == 1:
-            return LLMResponse(
-                content=None,
-                tool_calls=[
-                    ToolCall(id="c1", name="read_file", arguments='{"path": "f.py"}'),
-                ],
-                finish_reason="tool_calls",
-            )
-        return LLMResponse(
-            content=None,
-            tool_calls=[
-                ToolCall(
-                    id="c2",
-                    name="submit_review",
-                    arguments=json.dumps(
-                        {
-                            "verdict": "approve",
-                            "summary": "<!-- guardrails-review -->\nLGTM",
-                            "comments": [],
-                        }
-                    ),
-                )
-            ],
-            finish_reason="tool_calls",
-        )
-
+def _stub_agentic_deps(monkeypatch, *, existing_threads=None):
+    """Stub common agentic review dependencies."""
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call_openrouter_tools)
-    monkeypatch.setattr(f"{_REVIEWER}.execute_tool", lambda n, a, c: "1: code\n")
+    monkeypatch.setattr(f"{_REVIEWER}.get_model_context_length", lambda _m: 100_000)
+    monkeypatch.setattr(f"{_REVIEWER}.build_ci_context", lambda *_a: "")
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads", lambda _pr, _o, _r: existing_threads or []
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_our_threads", lambda t: t)
 
-    result = _run_agentic_review(config, diff, pr_meta, pr=42)
+    posted_comments: list[object] = []
+    monkeypatch.setattr(
+        f"{_REVIEWER}.post_inline_comments",
+        lambda _pr, comments, _o, _r, _sha: posted_comments.extend(comments) or True,
+    )
+    return posted_comments
 
-    assert result.verdict == "approve"
-    assert "LGTM" in result.summary
-    assert call_count["n"] == 2
 
-
-def test_agentic_loop_max_iterations_forces_submit(monkeypatch):
-    """When max_iterations is reached, tool_choice forces submit_review."""
-    config = ReviewConfig(model="test/m", agentic=True, max_iterations=2)
-    diff = "diff --git a/f.py b/f.py\n"
-    pr_meta = _meta()
+def test_agentic_loop_calls_tools_then_finishes(monkeypatch):
+    """Agentic loop executes tools, posts comments, then finishes."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
+    diff = (
+        "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n"
+        "@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+    )
+    pr_meta = _meta(head_ref_oid="sha123")
+    posted = _stub_agentic_deps(monkeypatch)
 
     call_count = {"n": 0}
-    captured_tool_choice = {"val": None}
 
     def fake_call(messages, model, *, tools, tool_choice=None):
         call_count["n"] += 1
-        captured_tool_choice["val"] = tool_choice
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
         if call_count["n"] == 1:
             return LLMResponse(
                 content=None,
@@ -609,65 +624,200 @@ def test_agentic_loop_max_iterations_forces_submit(monkeypatch):
                     ToolCall(id="c1", name="read_file", arguments='{"path": "f.py"}'),
                 ],
                 finish_reason="tool_calls",
+                usage=usage,
+            )
+        if call_count["n"] == 2:
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="c2",
+                        name="post_comments",
+                        arguments=json.dumps(
+                            {
+                                "comments": [
+                                    {"path": "f.py", "line": 2, "body": "Bug here"},
+                                ],
+                            }
+                        ),
+                    ),
+                ],
+                finish_reason="tool_calls",
+                usage=usage,
             )
         return LLMResponse(
             content=None,
-            tool_calls=[
-                ToolCall(
-                    id="c2",
-                    name="submit_review",
-                    arguments=json.dumps(
-                        {
-                            "verdict": "request_changes",
-                            "summary": "<!-- guardrails-review -->\nNeeds work",
-                            "comments": [],
-                        }
-                    ),
-                )
-            ],
+            tool_calls=[ToolCall(id="c3", name="finish_review", arguments="{}")],
             finish_reason="tool_calls",
+            usage=usage,
         )
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
-    monkeypatch.setattr(f"{_REVIEWER}.execute_tool", lambda n, a, c: "content")
+    monkeypatch.setattr(f"{_REVIEWER}.execute_tool", lambda _n, _a, _c: "1: code\n")
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=42)
+
+    assert result.verdict == "request_changes"
+    assert result.comments == []  # already posted
+    assert len(posted) == 1
+    assert call_count["n"] == 3
+
+
+def test_agentic_loop_no_progress_streak_terminates(monkeypatch):
+    """Loop terminates after 2 empty responses (no tool calls, no content)."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
+    diff = "diff --git a/f.py b/f.py\n"
+    pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
+
+    call_count = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        return LLMResponse(
+            content=None,
+            tool_calls=[],
+            finish_reason="stop",
+            usage={"prompt_tokens": 10_000, "completion_tokens": 0},
+        )
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
 
-    assert result.verdict == "request_changes"
-    assert call_count["n"] == 2
-    assert captured_tool_choice["val"] is not None
-    assert captured_tool_choice["val"]["function"]["name"] == "submit_review"
+    assert result.verdict == "approve"  # no comments posted
+    assert call_count["n"] == 2  # stopped after 2 empty responses
 
 
-def test_agentic_fallback_to_oneshot(monkeypatch):
-    """When agentic API call raises RuntimeError, falls back to oneshot."""
-    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
-    diff = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+def test_agentic_loop_budget_exhaustion_terminates(monkeypatch):
+    """Loop terminates when token budget is exhausted."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=30)
+    diff = "diff --git a/f.py b/f.py\n"
     pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
 
-    _api_err = "API error 400: tools not supported"
+    call_count = {"n": 0}
 
-    def fake_call_tools(messages, model, *, tools, tool_choice=None):
-        raise RuntimeError(_api_err)
-
-    def fake_call(messages, model):
-        return json.dumps(
-            {
-                "verdict": "approve",
-                "summary": "<!-- guardrails-review -->\nFallback review",
-                "comments": [],
-            }
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        # Return high prompt_tokens to exhaust budget quickly
+        # Budget max = 80_000 (80% of 100k). Reserve = 15_000.
+        # With prompt_tokens=75_000, remaining=5000, which is < 20_000+15_000
+        return LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(id="c1", name="read_file", arguments='{"path": "f.py"}'),
+            ],
+            finish_reason="tool_calls",
+            usage={"prompt_tokens": 75_000, "completion_tokens": 100},
         )
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call_tools)
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", fake_call)
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+    monkeypatch.setattr(f"{_REVIEWER}.execute_tool", lambda _n, _a, _c: "code")
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
 
     assert result.verdict == "approve"
-    assert "Fallback review" in result.summary
+    assert call_count["n"] == 1  # stopped after first iteration
+
+
+def test_agentic_loop_mid_failure_returns_partial(monkeypatch):
+    """Mid-loop API failure returns with what was already posted."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
+    diff = (
+        "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n"
+        "@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+    )
+    pr_meta = _meta()
+    posted = _stub_agentic_deps(monkeypatch)
+
+    call_count = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
+        if call_count["n"] == 1:
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="post_comments",
+                        arguments=json.dumps(
+                            {
+                                "comments": [
+                                    {"path": "f.py", "line": 2, "body": "Bug"},
+                                ],
+                            }
+                        ),
+                    ),
+                ],
+                finish_reason="tool_calls",
+                usage=usage,
+            )
+        msg = "API error 500"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    # Should have posted 1 comment and returned partial result
+    assert len(posted) == 1
+    assert result.verdict == "request_changes"
+    assert result.comments == []  # already posted
+
+
+def test_agentic_loop_validates_comments_before_posting(monkeypatch):
+    """Comments on invalid lines are dropped before posting."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
+    diff = (
+        "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n"
+        "@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+    )
+    pr_meta = _meta()
+    posted = _stub_agentic_deps(monkeypatch)
+
+    call_count = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
+        if call_count["n"] == 1:
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="post_comments",
+                        arguments=json.dumps(
+                            {
+                                "comments": [
+                                    {"path": "f.py", "line": 2, "body": "Valid"},
+                                    {"path": "f.py", "line": 999, "body": "Invalid"},
+                                ],
+                            }
+                        ),
+                    ),
+                ],
+                finish_reason="tool_calls",
+                usage=usage,
+            )
+        return LLMResponse(
+            content=None,
+            tool_calls=[ToolCall(id="c2", name="finish_review", arguments="{}")],
+            finish_reason="tool_calls",
+            usage=usage,
+        )
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    # Only valid comment should have been posted
+    assert len(posted) == 1
+    assert posted[0].path == "f.py"
+    assert posted[0].line == 2
 
 
 def test_parse_response_comment_defaults():
@@ -756,24 +906,27 @@ def test_compute_verdict_any_comment_blocks():
     assert _compute_verdict(comments) == "request_changes"
 
 
-def test_agentic_loop_exhaustion_returns_request_changes(monkeypatch):
-    """When LLM never calls submit_review, loop exhausts and returns request_changes."""
-    config = ReviewConfig(model="test/m", agentic=True, max_iterations=2)
+def test_agentic_loop_finish_review_approves_when_no_comments(monkeypatch):
+    """finish_review with no comments posted results in approve."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n"
     pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
 
     def fake_call(messages, model, *, tools, tool_choice=None):
-        # Always return empty response (no tool calls, no content)
-        return LLMResponse(content=None, tool_calls=[], finish_reason="stop")
+        return LLMResponse(
+            content=None,
+            tool_calls=[ToolCall(id="c1", name="finish_review", arguments="{}")],
+            finish_reason="tool_calls",
+            usage={"prompt_tokens": 10_000, "completion_tokens": 100},
+        )
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
 
-    assert result.verdict == "request_changes"
-    assert "exhausted" in result.summary.lower()
-    assert "<!-- guardrails-review -->" in result.summary
+    assert result.verdict == "approve"
+    assert result.comments == []
 
 
 def test_run_resolve_failure_returns_1(monkeypatch, capsys):
@@ -784,12 +937,12 @@ def test_run_resolve_failure_returns_1(monkeypatch, capsys):
         raise RuntimeError(msg)
 
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: _meta())
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: _meta())
     monkeypatch.setattr(
         f"{_REVIEWER}.get_pr_diff",
-        lambda pr: "diff --git a/f.py b/f.py\n",
+        lambda _pr: "diff --git a/f.py b/f.py\n",
     )
-    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda _pr: set())
     monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", failing_get_threads)
 
     result = run_resolve(42)
@@ -799,39 +952,39 @@ def test_run_resolve_failure_returns_1(monkeypatch, capsys):
     assert "Failed to fetch review threads" in captured.out
 
 
-def test_agentic_content_response_fallback(monkeypatch):
-    """Model returning content+stop gets nudged; if it then calls submit_review it completes."""
+def test_agentic_content_response_nudged(monkeypatch):
+    """Model returning content+stop gets nudged; if it then calls finish_review it completes."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n"
     pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
 
     call_count = {"n": 0}
 
     def fake_call(messages, model, *, tools, tool_choice=None):
         call_count["n"] += 1
-        if call_count["n"] == 1:
-            # Return content+stop (should be nudged)
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
+        if call_count["n"] <= 2:
+            # Content response (no tool calls but has content) — gets nudged
             return LLMResponse(
-                content=json.dumps(
-                    {
-                        "verdict": "approve",
-                        "summary": "<!-- guardrails-review -->\nDirect content",
-                        "comments": [],
-                    }
-                ),
+                content="Thinking about the diff...",
                 tool_calls=[],
                 finish_reason="stop",
+                usage=usage,
             )
-        # After nudge, returns submit_review
-        return _make_submit_response()
+        return LLMResponse(
+            content=None,
+            tool_calls=[ToolCall(id="c1", name="finish_review", arguments="{}")],
+            finish_reason="tool_calls",
+            usage=usage,
+        )
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
 
     assert result.verdict == "approve"
-    assert call_count["n"] == 2
+    assert call_count["n"] == 3  # 2 content (nudged) + 1 finish
 
 
 # --- _print_dry_run tests ---
@@ -898,7 +1051,7 @@ def _make_thread(**kwargs):
 
 
 def test_run_resolve_resolves_threads(monkeypatch, capsys):
-    """run_resolve in non-dry-run mode calls resolve_thread for each resolvable thread."""
+    """run_resolve calls resolve_thread for each resolvable thread."""
     threads = [
         _make_thread(thread_id="t1", path="deleted.py", line=5),
         _make_thread(thread_id="t2", path="current.py", line=2),  # line 2 is in diff
@@ -906,10 +1059,10 @@ def test_run_resolve_resolves_threads(monkeypatch, capsys):
 
     resolved_ids = []
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: _meta())
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: _meta())
     monkeypatch.setattr(
         f"{_REVIEWER}.get_pr_diff",
-        lambda pr: (
+        lambda _pr: (
             "diff --git a/current.py b/current.py\n"
             "--- a/current.py\n+++ b/current.py\n"
             "@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
@@ -917,11 +1070,11 @@ def test_run_resolve_resolves_threads(monkeypatch, capsys):
     )
     monkeypatch.setattr(
         f"{_REVIEWER}.get_deleted_files",
-        lambda pr: {"deleted.py"},
+        lambda _pr: {"deleted.py"},
     )
     monkeypatch.setattr(
         f"{_REVIEWER}.get_review_threads",
-        lambda pr, owner, repo: threads,
+        lambda _pr, _owner, _repo: threads,
     )
     monkeypatch.setattr(
         f"{_REVIEWER}.resolve_thread",
@@ -944,14 +1097,16 @@ def test_run_resolve_handles_failed_resolution(monkeypatch, capsys):
     ]
 
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: _meta())
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: _meta())
     monkeypatch.setattr(
         f"{_REVIEWER}.get_pr_diff",
-        lambda pr: "diff --git a/x.py b/x.py\n",
+        lambda _pr: "diff --git a/x.py b/x.py\n",
     )
-    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: {"deleted.py"})
-    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: threads)
-    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: False)
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda _pr: {"deleted.py"})
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads", lambda _pr, _owner, _repo: threads
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda _tid: False)
 
     result = run_resolve(42)
 
@@ -995,21 +1150,23 @@ def test_run_review_dedup_removes_duplicate_comments(tmp_path, monkeypatch, caps
     ]
 
     posted = []
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda _pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: pr_meta)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.call_openrouter", lambda _msgs, _model: llm_response
+    )
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(
         f"{_REVIEWER}.post_review",
-        lambda pr, result, owner, repo, sha: posted.append(result) or True,
+        lambda _pr, result, _owner, _repo, _sha: posted.append(result) or True,
     )
-    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         f"{_REVIEWER}.get_review_threads",
-        lambda pr, owner, repo: existing_threads,
+        lambda _pr, _owner, _repo: existing_threads,
     )
-    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
-    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda tid: True)
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda _pr: set())
+    monkeypatch.setattr(f"{_REVIEWER}.resolve_thread", lambda _tid: True)
 
     result = run_review(53, project_dir=tmp_path)
 
@@ -1050,20 +1207,22 @@ def test_run_review_auto_resolves_stale_threads(tmp_path, monkeypatch, capsys):
     ]
 
     resolved_ids = []
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda _pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: pr_meta)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.call_openrouter", lambda _msgs, _model: llm_response
+    )
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(
         f"{_REVIEWER}.post_review",
-        lambda pr, result, owner, repo, sha: True,
+        lambda _pr, _result, _owner, _repo, _sha: True,
     )
-    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_REVIEWER}.set_commit_status", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         f"{_REVIEWER}.get_review_threads",
-        lambda pr, owner, repo: existing_threads,
+        lambda _pr, _owner, _repo: existing_threads,
     )
-    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: {"removed.py"})
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda _pr: {"removed.py"})
     monkeypatch.setattr(
         f"{_REVIEWER}.resolve_thread",
         lambda tid: resolved_ids.append(tid) or True,
@@ -1127,19 +1286,27 @@ def _stub_clean_review(tmp_path, monkeypatch, *, existing_threads=None):
         "resolved_threads": [],
     }
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda pr: diff_text)
-    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda pr: pr_meta)
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", lambda msgs, model: llm_response)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_diff", lambda _pr: diff_text)
+    monkeypatch.setattr(f"{_REVIEWER}.get_pr_metadata", lambda _pr: pr_meta)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.call_openrouter", lambda _msgs, _model: llm_response
+    )
     monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.get_review_threads", lambda pr, owner, repo: threads)
-    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda pr: set())
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_review_threads", lambda _pr, _owner, _repo: threads
+    )
+    monkeypatch.setattr(f"{_REVIEWER}.get_deleted_files", lambda _pr: set())
     monkeypatch.setattr(
         f"{_REVIEWER}.post_review",
-        lambda pr, result, owner, repo, sha: captured["posted_reviews"].append(result) or True,
+        lambda _pr, result, _owner, _repo, _sha: (
+            captured["posted_reviews"].append(result) or True
+        ),
     )
     monkeypatch.setattr(
         f"{_REVIEWER}.set_commit_status",
-        lambda owner, repo, sha, state, desc: captured["set_statuses"].append((state, desc)),
+        lambda _owner, _repo, _sha, state, desc: captured["set_statuses"].append(
+            (state, desc)
+        ),
     )
     monkeypatch.setattr(
         f"{_REVIEWER}.resolve_thread",
@@ -1364,22 +1531,18 @@ def test_run_review_memory_context_injected_into_prompt(tmp_path, monkeypatch):
 
 
 def _make_submit_response(verdict: str = "approve") -> LLMResponse:
+    """Return a finish_review response (replaces old submit_review in v2 loop)."""
     return LLMResponse(
         content=None,
         tool_calls=[
             ToolCall(
                 id="submit1",
-                name="submit_review",
-                arguments=json.dumps(
-                    {
-                        "verdict": verdict,
-                        "summary": "<!-- guardrails-review -->\nDone",
-                        "comments": [],
-                    }
-                ),
+                name="finish_review",
+                arguments="{}",
             )
         ],
         finish_reason="tool_calls",
+        usage={"prompt_tokens": 20_000, "completion_tokens": 100},
     )
 
 
@@ -1388,18 +1551,19 @@ def test_agentic_empty_stop_injects_nudge_and_continues(monkeypatch):
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n"
     pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
 
     call_count = {"n": 0}
 
     def fake_call(messages, model, *, tools, tool_choice=None):
         call_count["n"] += 1
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
         if call_count["n"] == 1:
             # Empty stop — no content, no tool calls
-            return LLMResponse(content=None, tool_calls=[], finish_reason="stop")
-        # Second call succeeds with submit_review
+            return LLMResponse(content=None, tool_calls=[], finish_reason="stop", usage=usage)
+        # Second call succeeds with finish_review
         return _make_submit_response()
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
@@ -1413,17 +1577,20 @@ def test_agentic_content_stop_injects_nudge(monkeypatch):
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n"
     pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
 
     call_count = {"n": 0}
 
     def fake_call(messages, model, *, tools, tool_choice=None):
         call_count["n"] += 1
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
         if call_count["n"] == 1:
             # Content stop without tool call
-            return LLMResponse(content="I found no issues.", tool_calls=[], finish_reason="stop")
+            return LLMResponse(
+                content="I found no issues.", tool_calls=[], finish_reason="stop", usage=usage
+            )
         return _make_submit_response()
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
@@ -1441,6 +1608,7 @@ def test_agentic_timeout_retries_then_falls_back(monkeypatch):
         "@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
     )
     pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
 
     def fake_call_tools(messages, model, *, tools, tool_choice=None):
         raise TimeoutError("timed out")
@@ -1454,7 +1622,6 @@ def test_agentic_timeout_retries_then_falls_back(monkeypatch):
             }
         )
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call_tools)
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter", fake_oneshot)
 
@@ -1469,6 +1636,7 @@ def test_agentic_timeout_retry_succeeds(monkeypatch):
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n"
     pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
 
     call_count = {"n": 0}
 
@@ -1478,7 +1646,6 @@ def test_agentic_timeout_retry_succeeds(monkeypatch):
             raise TimeoutError("timed out")
         return _make_submit_response()
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
@@ -1497,78 +1664,96 @@ def _make_large_diff(n_lines: int) -> str:
     return header + "".join(f"+line{i}\n" for i in range(1, n_lines + 1))
 
 
-def test_agentic_premature_submit_nudges_on_large_diff(monkeypatch):
-    """submit_review after 0 tool uses on 200-line diff -> nudge, then accepted."""
+def test_agentic_premature_post_comments_nudges_on_large_diff(monkeypatch):
+    """post_comments after 0 tool uses on 200-line diff -> nudge injected."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
     diff = _make_large_diff(200)
-    pr_meta = _meta()
+    pr_meta = _meta(head_ref_oid="sha123")
+    _stub_agentic_deps(monkeypatch)
 
     call_count = {"n": 0}
 
     def fake_call(messages, model, *, tools, tool_choice=None):
         call_count["n"] += 1
-        # Always return submit_review
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
+        if call_count["n"] == 1:
+            # post_comments with 0 prior tool uses -> should nudge
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="post_comments",
+                        arguments=json.dumps({"comments": []}),
+                    )
+                ],
+                finish_reason="tool_calls",
+                usage=usage,
+            )
         return _make_submit_response()
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
 
-    # Should have looped at least twice (first was rejected, second accepted)
+    # Should have looped at least twice (first was nudged, second finish_review accepted)
     assert call_count["n"] >= 2
     assert result.verdict == "approve"
 
 
-def test_agentic_premature_submit_accepted_on_small_diff(monkeypatch):
-    """submit_review after 0 tool uses on 50-line diff -> accepted immediately."""
+def test_agentic_premature_post_comments_accepted_on_small_diff(monkeypatch):
+    """post_comments on small diff -> no nudge (threshold not crossed)."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
-    diff = _make_large_diff(50)
-    pr_meta = _meta()
+    diff = _make_large_diff(50)  # below threshold
+    pr_meta = _meta(head_ref_oid="sha123")
+    _stub_agentic_deps(monkeypatch)
 
     call_count = {"n": 0}
 
     def fake_call(messages, model, *, tools, tool_choice=None):
         call_count["n"] += 1
-        return _make_submit_response()
-
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
-    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
-
-    result = _run_agentic_review(config, diff, pr_meta, pr=1)
-
-    # Small diff -> no nudge -> only 1 call needed
-    assert call_count["n"] == 1
-    assert result.verdict == "approve"
-
-
-def test_agentic_premature_submit_accepted_with_enough_tools(monkeypatch):
-    """submit_review after 3 tool uses on large diff -> accepted."""
-    config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
-    diff = _make_large_diff(200)
-    pr_meta = _meta()
-
-    call_count = {"n": 0}
-
-    def fake_call(messages, model, *, tools, tool_choice=None):
-        call_count["n"] += 1
-        if call_count["n"] <= 3:
-            # Use read_file tools first
+        usage = {"prompt_tokens": 20_000, "completion_tokens": 100}
+        if call_count["n"] == 1:
             return LLMResponse(
                 content=None,
                 tool_calls=[
-                    ToolCall(id=f"c{call_count['n']}", name="read_file", arguments='{"path": "f.py", "start_line": 1, "end_line": 10}'),
+                    ToolCall(
+                        id="c1",
+                        name="post_comments",
+                        arguments=json.dumps({"comments": []}),
+                    )
                 ],
                 finish_reason="tool_calls",
+                usage=usage,
             )
         return _make_submit_response()
 
-    monkeypatch.setattr(f"{_REVIEWER}.get_repo_info", lambda: ("owner", "repo"))
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
-    monkeypatch.setattr(f"{_REVIEWER}.execute_tool", lambda n, a, c: "content")
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
 
-    # After 3 tool uses, submit is accepted without nudge
+    # Small diff -> no nudge on post_comments -> continues to finish
     assert result.verdict == "approve"
-    assert call_count["n"] == 4
+    assert call_count["n"] == 2
+
+
+def test_agentic_finish_review_always_accepted(monkeypatch):
+    """finish_review is always accepted without nudge regardless of tool use count."""
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
+    diff = _make_large_diff(200)
+    pr_meta = _meta()
+    _stub_agentic_deps(monkeypatch)
+
+    call_count = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_count["n"] += 1
+        return _make_submit_response()
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    # finish_review accepted on first call without nudge
+    assert call_count["n"] == 1
+    assert result.verdict == "approve"

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import subprocess
+
 from guardrails_review.prompts import (
     _AGENTIC_SYSTEM_PROMPT,
     _SYSTEM_PROMPT,
     _build_user_content,
     build_agentic_messages,
+    build_ci_context,
     build_messages,
 )
 from guardrails_review.types import PathInstruction, PRMetadata, ReviewConfig, ReviewThread
@@ -27,16 +31,21 @@ def test_system_prompt_contains_defect_categories():
 
 
 def test_agentic_prompt_contains_tool_instructions():
-    """Agentic prompt includes tool usage instructions."""
-    assert "submit_review" in _AGENTIC_SYSTEM_PROMPT
+    """Agentic prompt includes tool usage instructions for new tools."""
+    assert "post_comments" in _AGENTIC_SYSTEM_PROMPT
+    assert "finish_review" in _AGENTIC_SYSTEM_PROMPT
     assert "read_file" in _AGENTIC_SYSTEM_PROMPT
     assert "search_code" in _AGENTIC_SYSTEM_PROMPT
+    # submit_review is gone
+    assert "submit_review" not in _AGENTIC_SYSTEM_PROMPT
 
 
 def test_build_user_content_includes_title_and_diff():
     """User content includes PR title and diff text."""
     config = ReviewConfig(model="m")
-    content = _build_user_content("diff text", config, _meta(title="My PR", body="desc"))
+    content = _build_user_content(
+        "diff text", config, _meta(title="My PR", body="desc")
+    )
 
     assert "My PR" in content
     assert "diff text" in content
@@ -104,7 +113,8 @@ def test_build_agentic_messages_uses_agentic_prompt():
 
     assert len(messages) == 2
     assert "tools" in messages[0]["content"].lower()
-    assert "submit_review" in messages[0]["content"]
+    assert "post_comments" in messages[0]["content"]
+    assert "finish_review" in messages[0]["content"]
 
 
 def test_build_user_content_includes_memory_context():
@@ -143,10 +153,10 @@ def test_build_agentic_messages_passes_memory_context():
     assert "gh CLI" in messages[1]["content"]
 
 
-def test_agentic_prompt_requires_submit_review():
-    """MUST and submit_review() appear in the agentic system prompt."""
+def test_agentic_prompt_requires_finish_review():
+    """MUST and finish_review() appear in the agentic system prompt."""
     assert "MUST" in _AGENTIC_SYSTEM_PROMPT
-    assert "submit_review()" in _AGENTIC_SYSTEM_PROMPT
+    assert "finish_review()" in _AGENTIC_SYSTEM_PROMPT
 
 
 def test_agentic_prompt_contains_ai_defect_categories():
@@ -229,3 +239,68 @@ def test_build_agentic_messages_empty_previous_comments():
     )
 
     assert "Existing Unresolved" not in messages[1]["content"]
+
+
+def test_build_agentic_messages_includes_ci_context():
+    """build_agentic_messages includes CI context when provided."""
+    config = ReviewConfig(model="m")
+    ci = "Pre-commit hooks: ruff (v0.8.0), mypy (v1.14)"
+    messages = build_agentic_messages("diff", config, _meta(), ci_context=ci)
+
+    assert "ruff" in messages[1]["content"]
+    assert "Pre-commit hooks" in messages[1]["content"]
+
+
+def test_build_agentic_messages_empty_ci_context():
+    """build_agentic_messages excludes CI context section when empty."""
+    config = ReviewConfig(model="m")
+    messages = build_agentic_messages("diff", config, _meta(), ci_context="")
+
+    assert "CI/CD" not in messages[1]["content"]
+
+
+# --- build_ci_context ---
+
+
+def test_build_ci_context_extracts_hooks(monkeypatch):
+    """build_ci_context extracts hook IDs and revs from pre-commit config."""
+    pre_commit_yaml = """\
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.0
+    hooks:
+      - id: ruff
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.0
+    hooks:
+      - id: mypy
+"""
+    encoded = base64.b64encode(pre_commit_yaml.encode()).decode()
+
+    def fake_run_gh(*args, **kwargs):
+        return subprocess.CompletedProcess(["gh"], 0, encoded + "\n", "")
+
+    monkeypatch.setattr("guardrails_review.prompts.run_gh", fake_run_gh)
+
+    result = build_ci_context("owner", "repo", "sha123")
+
+    assert "ruff" in result
+    assert "ruff-format" in result
+    assert "mypy" in result
+    assert "v0.8.0" in result
+    assert "v1.14.0" in result
+
+
+def test_build_ci_context_returns_empty_on_error(monkeypatch):
+    """build_ci_context returns empty string when file fetch fails."""
+
+    def fake_run_gh(*args, **kwargs):
+        msg = "not found"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("guardrails_review.prompts.run_gh", fake_run_gh)
+
+    result = build_ci_context("owner", "repo", "sha123")
+
+    assert result == ""

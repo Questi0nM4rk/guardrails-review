@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import sys
-from dataclasses import asdict
 
 from guardrails_review.cache import load_all_reviews, load_latest_review
 from guardrails_review.context import build_agent_context
@@ -23,7 +23,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # review
     review_p = sub.add_parser("review", help="Run LLM review on a PR")
     review_p.add_argument("--pr", type=int, required=True, help="PR number")
-    review_p.add_argument("--dry-run", action="store_true", help="Print review without posting")
+    review_p.add_argument(
+        "--dry-run", action="store_true", help="Print review without posting"
+    )
     review_p.add_argument(
         "--verbose", "-v", action="store_true",
         help="Print each agentic loop iteration (tool calls and model reasoning)",
@@ -32,7 +34,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # comments
     comments_p = sub.add_parser("comments", help="Query review findings")
     comments_p.add_argument("--pr", type=int, required=True, help="PR number")
-    comments_p.add_argument("--json", dest="as_json", action="store_true", help="Output as JSON")
+    comments_p.add_argument(
+        "--json", dest="as_json", action="store_true", help="Output as JSON"
+    )
 
     # approve
     approve_p = sub.add_parser("approve", help="Approve or request changes on a PR")
@@ -51,14 +55,21 @@ def _build_parser() -> argparse.ArgumentParser:
     resolve_p = sub.add_parser("resolve", help="Auto-resolve stale review threads")
     resolve_p.add_argument("--pr", type=int, required=True, help="PR number")
     resolve_p.add_argument(
-        "--dry-run", action="store_true", help="Print resolvable threads without resolving"
+        "--dry-run",
+        action="store_true",
+        help="Print resolvable threads without resolving",
     )
 
     # context
-    context_p = sub.add_parser("context", help="Agent context: structured JSON of review state")
+    context_p = sub.add_parser(
+        "context", help="Agent context: structured JSON of review state"
+    )
     context_p.add_argument("--pr", type=int, required=True, help="PR number")
     context_p.add_argument(
-        "--max-comments", type=int, default=20, help="Max unresolved comments to show (default 20)"
+        "--max-comments",
+        type=int,
+        default=20,
+        help="Max unresolved comments to show (default 20)",
     )
 
     return parser

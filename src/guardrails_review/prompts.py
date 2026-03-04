@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import fnmatch
+import logging
+import re
 from typing import TYPE_CHECKING, Any
+
+from guardrails_review.github import run_gh
 
 if TYPE_CHECKING:
     from guardrails_review.types import (
@@ -12,6 +17,8 @@ if TYPE_CHECKING:
         ReviewConfig,
         ReviewThread,
     )
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are a pedantic defect detector. Review the PR diff and return ONLY valid JSON:
@@ -63,10 +70,9 @@ When in doubt, request changes. A false positive that slows one PR is cheap.
 Missed rot that degrades the codebase for years is not.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MANDATORY: You MUST call submit_review() as your final action.
+MANDATORY: You MUST call finish_review() as your final action.
 Never output text and stop. Never say "LGTM" and return.
-The ONLY valid exit from this review is calling submit_review().
-If you find no issues, call submit_review(verdict="approve", ...).
+The ONLY valid exit from this review is calling finish_review().
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Workflow
@@ -83,10 +89,15 @@ If you find no issues, call submit_review(verdict="approve", ...).
    - search_code(query) — find callers, related code, or duplicate logic elsewhere
      in the codebase. For every non-trivial function added, search for similar patterns.
 
-4. Use at least 2-3 tool calls after think() before submitting, unless the diff is
+4. Use at least 2-3 tool calls after think() before finishing, unless the diff is
    trivially small (< 20 lines with no logic changes).
 
-5. Call submit_review() with your findings.
+5. Use post_comments() to post findings IMMEDIATELY as you find them — do not
+   accumulate. Each call to post_comments() posts inline comments to the PR
+   immediately. Your budget status will be shown each iteration — when warned to
+   wrap up, finish outstanding files and call finish_review().
+
+6. Call finish_review() when you have no more files to investigate.
 
 ## Defect categories — standard
 
@@ -193,6 +204,8 @@ def _build_user_content(  # noqa: PLR0913
     memory_context: str = "",
     previous_comments: list[ReviewThread] | None = None,
     changed_files: list[str] | None = None,
+    *,
+    ci_context: str = "",
 ) -> str:
     """Build the user message content shared by oneshot and agentic modes."""
     parts = [
@@ -245,6 +258,9 @@ def _build_user_content(  # noqa: PLR0913
             "",
             *parts,
         ]
+    if ci_context:
+        parts.append("")
+        parts.append(f"## CI/CD context\n\n{ci_context}")
     return "\n".join(parts)
 
 
@@ -271,6 +287,8 @@ def build_agentic_messages(  # noqa: PLR0913
     memory_context: str = "",
     previous_comments: list[ReviewThread] | None = None,
     changed_files: list[str] | None = None,
+    *,
+    ci_context: str = "",
 ) -> list[dict[str, Any]]:
     """Build the message list for the agentic tool-use review loop."""
     return [
@@ -284,6 +302,50 @@ def build_agentic_messages(  # noqa: PLR0913
                 memory_context,
                 previous_comments=previous_comments,
                 changed_files=changed_files,
+                ci_context=ci_context,
             ),
         },
     ]
+
+
+def build_ci_context(owner: str, repo: str, commit_sha: str) -> str:
+    """Extract CI/CD context from ``.pre-commit-config.yaml`` in the repo.
+
+    Uses regex extraction (no YAML dependency).  Best-effort: returns
+    empty string on any error.
+
+    Args:
+        owner: Repository owner.
+        repo: Repository name.
+        commit_sha: Commit SHA to read the file at.
+
+    Returns:
+        Formatted string of hook IDs and versions, or empty string.
+    """
+    try:
+        proc = run_gh(
+            "api",
+            f"repos/{owner}/{repo}/contents/.pre-commit-config.yaml",
+            "-q",
+            ".content",
+            "--method",
+            "GET",
+            "-f",
+            f"ref={commit_sha}",
+        )
+        content = base64.b64decode(proc.stdout.strip()).decode(errors="replace")
+    except (RuntimeError, ValueError, UnicodeDecodeError):
+        return ""
+
+    hook_ids = re.findall(r"- id: (\S+)", content)
+    revs = re.findall(r"rev: (\S+)", content)
+
+    if not hook_ids:
+        return ""
+
+    parts = ["Pre-commit hooks:"]
+    for i, hook_id in enumerate(hook_ids):
+        rev = revs[i] if i < len(revs) else "unknown"
+        parts.append(f"  - {hook_id} ({rev})")
+
+    return "\n".join(parts)

@@ -36,9 +36,9 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+from dataclasses import dataclass, field
 import json
 import logging
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from guardrails_review.github import run_gh
@@ -122,11 +122,11 @@ def _dict_to_memory(data: dict) -> Memory:
 
 
 def _prune_memory(memory: Memory) -> Memory:
-    """Prune false_positives to FALSE_POSITIVE_LIMIT, keeping most recent by last_seen."""
+    """Prune false_positives to FALSE_POSITIVE_LIMIT, keeping most recent by last_seen."""  # noqa: E501
     fps = memory.false_positives
     if len(fps) <= FALSE_POSITIVE_LIMIT:
         return dataclasses.replace(memory)
-    pruned = sorted(fps, key=lambda fp: fp.last_seen, reverse=True)[:FALSE_POSITIVE_LIMIT]
+    pruned = sorted(fps, key=lambda fp: fp.last_seen, reverse=True)[:FALSE_POSITIVE_LIMIT]  # noqa: E501
     return dataclasses.replace(memory, false_positives=pruned)
 
 
@@ -280,7 +280,8 @@ def save_memory(memory: Memory) -> None:
     size = len(content_json.encode())
     if size > MEMORY_SIZE_WARN_BYTES:
         logger.warning(
-            "Memory size %d bytes exceeds %d byte threshold — consider pruning conventions",
+            "Memory size %d bytes exceeds %d byte threshold"
+            " — consider pruning conventions",
             size,
             MEMORY_SIZE_WARN_BYTES,
         )
@@ -294,7 +295,7 @@ def save_memory(memory: Memory) -> None:
             _create_orphan_branch(owner, repo)
             sha = ""
 
-        _put_file(owner, repo, content_json, sha, "chore: update guardrails-review memory")
+        _put_file(owner, repo, content_json, sha, "chore: update guardrails-review memory")  # noqa: E501
     except RuntimeError as exc:
         logger.warning("Failed to save memory to %s branch: %s", MEMORY_BRANCH, exc)
 
@@ -328,7 +329,8 @@ def update_from_review(
     new_fixed = stats.fixed + n_fixed
 
     if new_total > 0:
-        new_avg = (stats.avg_rounds_to_resolve * stats.total_threads + n_fixed * 1.0) / new_total
+        prev_total = stats.avg_rounds_to_resolve * stats.total_threads
+        new_avg = (prev_total + n_fixed * 1.0) / new_total
     else:
         new_avg = 0.0
 

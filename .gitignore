@@ -7,3 +7,6 @@ build/
 .ruff_cache/
 .guardrails-review/cache/
 uv.lock
+.ai-guardrails/
+mutants/
+*.bak

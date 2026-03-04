@@ -53,7 +53,7 @@ model = "openai/gpt-4o"
     assert result.extra_instructions == ""
     assert result.max_diff_chars == 120_000
     assert result.agentic is True
-    assert result.max_iterations == 10
+    assert result.max_iterations == 30
 
 
 def test_load_config_missing_file(tmp_path: Path) -> None:
@@ -104,14 +104,14 @@ auto_approve = true
 
 
 def test_load_config_agentic_defaults(tmp_path: Path) -> None:
-    """Agentic mode defaults to True with 5 iterations when not specified."""
+    """Agentic mode defaults to True with 15 iterations when not specified."""
     config_file = tmp_path / ".guardrails-review.toml"
     config_file.write_text('[config]\nmodel = "test/m"\n')
 
     result = load_config(tmp_path)
 
     assert result.agentic is True
-    assert result.max_iterations == 10
+    assert result.max_iterations == 30
 
 
 def test_load_config_ignores_removed_fields(tmp_path: Path) -> None:
@@ -192,14 +192,14 @@ def test_load_config_path_instructions_absent(tmp_path: Path) -> None:
     assert result.path_instructions == []
 
 
-def test_load_config_max_iterations_default_is_10(tmp_path: Path) -> None:
-    """When max_iterations is absent, default is 10."""
+def test_load_config_max_iterations_default_is_30(tmp_path: Path) -> None:
+    """When max_iterations is absent, default is 30."""
     config_file = tmp_path / ".guardrails-review.toml"
     config_file.write_text('[config]\nmodel = "test/m"\n')
 
     result = load_config(tmp_path)
 
-    assert result.max_iterations == 10
+    assert result.max_iterations == 30
 
 
 def test_load_config_agentic_disabled(tmp_path: Path) -> None:
