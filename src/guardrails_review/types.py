@@ -35,6 +35,8 @@ class ReviewConfig:
     agentic: bool = True
     max_iterations: int = 30
     path_instructions: list[PathInstruction] = field(default_factory=list)
+    auto_merge: bool = False
+    merge_method: str = "squash"
 
 
 @dataclass(frozen=True)

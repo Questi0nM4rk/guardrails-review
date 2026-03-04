@@ -352,6 +352,23 @@ def set_commit_status(
     )
 
 
+def enable_auto_merge(pr: int, *, merge_method: str = "squash") -> bool:
+    """Enable auto-merge on a pull request.
+
+    Args:
+        pr: Pull request number.
+        merge_method: One of "squash", "merge", or "rebase".
+
+    Returns:
+        True if auto-merge was enabled, False if already enabled or unsupported.
+    """
+    try:
+        run_gh("pr", "merge", str(pr), "--auto", f"--{merge_method}")
+    except RuntimeError:
+        return False
+    return True
+
+
 def approve_pr(pr: int, body: str) -> bool:
     """Approve a pull request with a comment.
 

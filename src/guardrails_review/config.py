@@ -53,6 +53,8 @@ def load_config(project_dir: Path | None = None) -> ReviewConfig:
         agentic=review_section.get("agentic", True),
         max_iterations=review_section.get("max_iterations", 30),
         path_instructions=path_instructions,
+        auto_merge=review_section.get("auto_merge", False),
+        merge_method=review_section.get("merge_method", "squash"),
     )
 
 

@@ -529,6 +529,41 @@ def test_get_pr_diff_raises_diff_too_large_on_406(monkeypatch: pytest.MonkeyPatc
         get_pr_diff(42)
 
 
+# --- enable_auto_merge ---
+
+
+def test_enable_auto_merge_calls_pr_merge_auto(monkeypatch: pytest.MonkeyPatch) -> None:
+    """enable_auto_merge calls gh pr merge --auto --squash."""
+    from guardrails_review.github import enable_auto_merge
+
+    captured: list[list[str]] = []
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured.append(args)
+        return _make_completed_process(stdout="")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = enable_auto_merge(42)
+
+    assert result is True
+    assert captured[0] == ["gh", "pr", "merge", "42", "--auto", "--squash"]
+
+
+def test_enable_auto_merge_returns_false_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """enable_auto_merge returns False when gh command fails."""
+    from guardrails_review.github import enable_auto_merge
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _make_completed_process(stdout="", returncode=1)
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = enable_auto_merge(42)
+
+    assert result is False
+
+
 # --- post_inline_comments ---
 
 

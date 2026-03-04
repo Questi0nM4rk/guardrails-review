@@ -12,6 +12,7 @@ from guardrails_review.config import load_config
 from guardrails_review.diff import format_diff_with_lines, parse_diff_hunks
 from guardrails_review.github import (
     DiffTooLargeError,
+    enable_auto_merge,
     get_deleted_files,
     get_pr_diff,
     get_pr_metadata,
@@ -366,6 +367,8 @@ def run_review(  # noqa: PLR0915
     n = len(final.comments) + len(invalid_comments)
     if final.verdict == "approve":
         _try_set_status(owner, repo, commit_sha, "success", "Approved")
+        if config.auto_merge and not dry_run:
+            enable_auto_merge(pr, merge_method=config.merge_method)
     else:
         desc = f"{n} defect(s) found" if n > 0 else "Unresolved threads remain"
         _try_set_status(owner, repo, commit_sha, "failure", desc)

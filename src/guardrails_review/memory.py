@@ -323,7 +323,9 @@ def update_from_review(
     """
     stats = memory.resolution_stats
     already_counted = set(stats.resolved_thread_ids)
-    new_resolved = [t for t in threads if t.is_resolved and t.thread_id not in already_counted]
+    new_resolved = [
+        t for t in threads if t.is_resolved and t.thread_id not in already_counted
+    ]
     n_fixed = len(new_resolved)
 
     if n_fixed == 0:
