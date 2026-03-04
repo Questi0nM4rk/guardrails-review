@@ -292,7 +292,7 @@ def test_save_memory_creates_branch_on_first_run() -> None:
 def test_save_memory_updates_existing_file() -> None:
     """save_memory updates file on branch when it already exists (passes SHA)."""
     mem = _make_memory()
-    existing_sha = "deadbeef1234"
+    existing_sha = "deadbeef1234"  # pragma: allowlist secret
     api_get_response = json.dumps({
         "content": _encode_b64(json.dumps(asdict(mem))),
         "sha": existing_sha,
