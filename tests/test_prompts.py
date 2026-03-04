@@ -167,6 +167,10 @@ def test_agentic_prompt_contains_ai_defect_categories():
     assert "Code duplication" in _AGENTIC_SYSTEM_PROMPT
     assert "Unnecessary complexity" in _AGENTIC_SYSTEM_PROMPT
     assert "last line of defense" in _AGENTIC_SYSTEM_PROMPT
+    # Hallucination verification protocol
+    assert "Verification protocol" in _AGENTIC_SYSTEM_PROMPT
+    assert "search_code" in _AGENTIC_SYSTEM_PROMPT
+    assert "model_dump" in _AGENTIC_SYSTEM_PROMPT  # concrete example
 
 
 def test_build_agentic_messages_injects_previous_comments():

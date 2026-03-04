@@ -84,14 +84,17 @@ def test_run_gh_failure(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_get_pr_diff(monkeypatch: pytest.MonkeyPatch) -> None:
-    """get_pr_diff returns the diff string from gh pr diff."""
+    """get_pr_diff returns the diff string (via git diff primary path)."""
     diff_text = "diff --git a/foo.py b/foo.py\n+hello\n"
 
     def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        assert "diff" in args
-        assert "--patch" in args
-        assert "42" in args
-        return _make_completed_process(stdout=diff_text)
+        if args[:2] == ["gh", "pr"] and "view" in args:
+            return _make_completed_process(stdout='{"baseRefName": "main"}')
+        if args[0] == "git" and args[1] == "fetch":
+            return _make_completed_process(stdout="")
+        if args[0] == "git" and args[1] == "diff":
+            return _make_completed_process(stdout=diff_text)
+        return _make_completed_process(stdout="")
 
     monkeypatch.setattr("subprocess.run", mock_run)
 
@@ -455,23 +458,50 @@ def test_get_deleted_files_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result == set()
 
 
-def test_get_pr_diff_uses_patch_flag(monkeypatch: pytest.MonkeyPatch) -> None:
-    """get_pr_diff passes --patch to gh pr diff."""
+def test_get_pr_diff_uses_git_diff_with_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_pr_diff uses git diff with -U5 context when git succeeds."""
     captured_args: list[list[str]] = []
+    diff_text = "diff --git a/foo.py b/foo.py\n+hello\n"
 
     def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         captured_args.append(args)
-        return _make_completed_process(stdout="diff output")
+        if args[:2] == ["gh", "pr"]:
+            return _make_completed_process(stdout='{"baseRefName": "main"}')
+        # git fetch and git diff both succeed
+        if args[0] == "git" and args[1] == "fetch":
+            return _make_completed_process(stdout="")
+        if args[0] == "git" and args[1] == "diff":
+            return _make_completed_process(stdout=diff_text)
+        return _make_completed_process(stdout="")
 
     monkeypatch.setattr("subprocess.run", mock_run)
 
-    get_pr_diff(42)
+    result = get_pr_diff(42)
 
-    cmd = captured_args[0]
-    assert "--patch" in cmd
-    assert "42" in cmd
-    # gh pr diff does not support -U; no unified flag should be passed
-    assert not any(a.startswith("-U") for a in cmd)
+    assert result == diff_text
+    git_diff_calls = [a for a in captured_args if a[0] == "git" and a[1] == "diff"]
+    assert git_diff_calls, "git diff should have been called"
+    assert any("-U5" in a for a in git_diff_calls[0])
+
+
+def test_get_pr_diff_falls_back_to_gh_on_git_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_pr_diff falls back to gh pr diff when git fetch fails."""
+    diff_text = "diff --git a/foo.py b/foo.py\n+hello\n"
+
+    def mock_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["gh", "pr"] and "view" in args:
+            return _make_completed_process(stdout='{"baseRefName": "main"}')
+        if args[0] == "git" and args[1] == "fetch":
+            return _make_completed_process(stdout="", returncode=1)
+        if args[:2] == ["gh", "pr"] and "diff" in args:
+            return _make_completed_process(stdout=diff_text)
+        return _make_completed_process(stdout="")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = get_pr_diff(42)
+
+    assert result == diff_text
 
 
 # --- post_inline_comments ---

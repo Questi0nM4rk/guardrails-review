@@ -121,9 +121,29 @@ failure mode (what will break, when, how).
 
 AI agents produce characteristic failure patterns. Prioritize:
 
-- **Hallucinated APIs**: calls to library methods, attributes, or modules that do not
-  exist in the imported package version. Check: does this method/attribute actually
-  exist? Is the import correct?
+- **Hallucinated APIs** — this is the highest-priority check for AI code. Use
+  ``search_code`` and ``read_file`` to verify EVERY non-trivial external call:
+
+  *Verification protocol* — for each call to a library function, method, or
+  attribute that is not Python stdlib:
+  1. ``search_code("def method_name")`` or ``search_code("class ClassName")``
+     to confirm it exists in the codebase or its dependencies.
+  2. ``read_file`` on the import source if available, or note the package and
+     check whether the call signature matches what the package exposes.
+  3. Flag if: the method does not exist on the type, the module path is wrong,
+     the argument names or order differ from the real API, or the return type
+     is used incorrectly downstream.
+
+  Common hallucination patterns:
+  - Calling ``.model_dump()`` on a Pydantic v1 model (v1 uses ``.dict()``)
+  - Using ``asyncio.get_event_loop().run_until_complete()`` in async context
+  - Passing keyword arguments that don't exist (e.g. ``json=True`` to requests)
+  - Accessing ``.data`` or ``.result`` on a type that returns the value directly
+  - Importing from a submodule path that doesn't exist (e.g. ``from x.y import z``
+    when ``z`` lives at ``from x import z``)
+  - Using removed or renamed methods from major version bumps (e.g. SQLAlchemy 2,
+    Django 4, FastAPI 0.100+)
+  - Chaining methods that return ``None`` (e.g. ``.sort()`` returns ``None``)
 - **Unnecessary abstractions**: factory classes, plugin registries, base classes, or
   strategy patterns introduced for single-use cases. The right question: could this
   be a plain function? If yes, the abstraction is waste and increases failure surface.

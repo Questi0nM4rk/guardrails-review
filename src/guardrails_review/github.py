@@ -48,16 +48,39 @@ def run_gh(
     return proc
 
 
-def get_pr_diff(pr: int) -> str:
+def get_pr_diff(pr: int, *, unified_context: int = 5) -> str:
     """Fetch the patch-format diff for a pull request.
+
+    Attempts to use ``git diff`` for controllable context lines. Falls back to
+    ``gh pr diff --patch`` (3-line context, GitHub default) if git is not
+    available or the base branch cannot be fetched.
 
     Args:
         pr: Pull request number.
+        unified_context: Lines of surrounding context per hunk (default 5).
 
     Returns:
-        The unified diff string (3 context lines per hunk, gh default).
-        Use the read_file tool for additional surrounding context when reviewing.
+        Unified diff string with ``unified_context`` lines of context per hunk.
     """
+    import subprocess as _subprocess
+
+    try:
+        meta = run_gh("pr", "view", str(pr), "--json", "baseRefName")
+        base_ref = json.loads(meta.stdout)["baseRefName"]
+        fetch = _subprocess.run(
+            ["git", "fetch", "origin", base_ref],
+            capture_output=True, text=True, check=False,
+        )
+        if fetch.returncode == 0:
+            diff = _subprocess.run(
+                ["git", "diff", f"origin/{base_ref}...HEAD", f"-U{unified_context}"],
+                capture_output=True, text=True, check=False,
+            )
+            if diff.returncode == 0 and diff.stdout.strip():
+                return diff.stdout
+    except (RuntimeError, KeyError, json.JSONDecodeError):
+        pass
+
     proc = run_gh("pr", "diff", str(pr), "--patch")
     return proc.stdout
 
