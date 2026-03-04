@@ -47,7 +47,7 @@ _Write updates below this line. Newest first._
 
 **Task 1: DONE**
 - Pushed `feat/per-repo-memory` to origin
-- PR #2 opened: https://github.com/Questi0nM4rk/guardrails-review/pull/2
+- PR #2 opened: [guardrails-review/pull/2](https://github.com/Questi0nM4rk/guardrails-review/pull/2)
 
 **Task 2: DONE (with findings)**
 - Dry-run completed against ai-guardrails PR #53
