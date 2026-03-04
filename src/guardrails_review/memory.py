@@ -220,6 +220,7 @@ def _put_file(
         "api",
         f"repos/{owner}/{repo}/contents/{MEMORY_FILENAME}",
         "--method", "PUT",
+        "--input", "-",
         input_data=json.dumps(payload),
     )
 
