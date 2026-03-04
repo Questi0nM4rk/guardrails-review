@@ -451,6 +451,22 @@ def test_update_from_review_returns_new_instance() -> None:
     assert updated is not mem
 
 
+def test_update_from_review_no_double_counting() -> None:
+    """update_from_review does not count the same thread twice across calls."""
+    mem = _make_memory()
+    result = _make_result()
+    thread = _make_thread("t1", is_resolved=True)
+
+    first = update_from_review(mem, result, [thread])
+    assert first.resolution_stats.total_threads == 1
+
+    # Second call with the same already-resolved thread — must not count again
+    second = update_from_review(first, result, [thread])
+    assert second.resolution_stats.total_threads == 1
+    assert second.resolution_stats.fixed == 1
+    assert "t1" in second.resolution_stats.resolved_thread_ids
+
+
 # ---------------------------------------------------------------------------
 # build_memory_context
 # ---------------------------------------------------------------------------

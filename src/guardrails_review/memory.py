@@ -75,6 +75,7 @@ class ResolutionStats:
     false_positive: int
     wont_fix: int
     avg_rounds_to_resolve: float
+    resolved_thread_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -92,6 +93,7 @@ class Memory:
             false_positive=0,
             wont_fix=0,
             avg_rounds_to_resolve=0.0,
+            resolved_thread_ids=[],
         )
     )
 
@@ -111,6 +113,7 @@ def _dict_to_memory(data: dict) -> Memory:
         false_positive=stats_data.get("false_positive", 0),
         wont_fix=stats_data.get("wont_fix", 0),
         avg_rounds_to_resolve=stats_data.get("avg_rounds_to_resolve", 0.0),
+        resolved_thread_ids=stats_data.get("resolved_thread_ids", []),
     )
     return Memory(
         version=data.get("version", 1),
@@ -318,13 +321,14 @@ def update_from_review(
     Returns:
         Updated Memory instance.
     """
-    resolved = [t for t in threads if t.is_resolved]
-    n_fixed = len(resolved)
+    stats = memory.resolution_stats
+    already_counted = set(stats.resolved_thread_ids)
+    new_resolved = [t for t in threads if t.is_resolved and t.thread_id not in already_counted]
+    n_fixed = len(new_resolved)
 
     if n_fixed == 0:
         return dataclasses.replace(memory)
 
-    stats = memory.resolution_stats
     new_total = stats.total_threads + n_fixed
     new_fixed = stats.fixed + n_fixed
 
@@ -334,12 +338,14 @@ def update_from_review(
     else:
         new_avg = 0.0
 
+    new_ids = list(already_counted) + [t.thread_id for t in new_resolved]
     new_stats = ResolutionStats(
         total_threads=new_total,
         fixed=new_fixed,
         false_positive=stats.false_positive,
         wont_fix=stats.wont_fix,
         avg_rounds_to_resolve=round(new_avg, 2),
+        resolved_thread_ids=new_ids,
     )
     return dataclasses.replace(memory, resolution_stats=new_stats)
 
