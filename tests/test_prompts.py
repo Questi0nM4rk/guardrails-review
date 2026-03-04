@@ -154,6 +154,9 @@ def test_agentic_prompt_contains_ai_defect_categories():
     assert "Hallucinated" in _AGENTIC_SYSTEM_PROMPT
     assert "idempotency" in _AGENTIC_SYSTEM_PROMPT
     assert "Hardcoded" in _AGENTIC_SYSTEM_PROMPT
+    assert "Code duplication" in _AGENTIC_SYSTEM_PROMPT
+    assert "Unnecessary complexity" in _AGENTIC_SYSTEM_PROMPT
+    assert "last line of defense" in _AGENTIC_SYSTEM_PROMPT
 
 
 def test_build_agentic_messages_injects_previous_comments():
