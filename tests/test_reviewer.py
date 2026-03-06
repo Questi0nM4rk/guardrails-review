@@ -9,6 +9,7 @@ from guardrails_review.memory import FalsePositive, Memory, ResolutionStats
 from guardrails_review.parser import parse_response, parse_submit_review_args
 from guardrails_review.prompts import build_agentic_messages, build_messages
 from guardrails_review.reviewer import (
+    _build_final_result,
     _compute_verdict,
     _print_dry_run,
     _run_agentic_review,
@@ -1757,3 +1758,69 @@ def test_agentic_finish_review_always_accepted(monkeypatch):
     # finish_review accepted on first call without nudge
     assert call_count["n"] == 1
     assert result.verdict == "approve"
+
+
+# ---------------------------------------------------------------------------
+# _build_final_result — agentic verdict preservation
+# ---------------------------------------------------------------------------
+
+
+def test_build_final_result_preserves_agentic_request_changes():
+    """Agentic reviews post inline comments and return comments=[].
+
+    _build_final_result must NOT downgrade request_changes → approve just
+    because result.comments is empty (inline comments are already on GitHub).
+    """
+    # Simulate what _run_agentic_review returns: verdict set, comments empty
+    result = ReviewResult(
+        verdict="request_changes",
+        summary="<!-- guardrails-review -->\n10 defect(s) found and posted as inline comments.",
+        comments=[],
+        model="test/m",
+        pr=1,
+    )
+    valid_lines: dict[str, set[int]] = {}
+
+    final, invalid = _build_final_result(result, valid_lines, pr=1)
+
+    assert final.verdict == "request_changes", (
+        "request_changes from agentic path must not be downgraded to approve"
+    )
+    assert invalid == []
+
+
+def test_build_final_result_approve_when_no_comments_and_result_approves():
+    """Normal approve path: result.verdict=approve AND comments=[] → approve."""
+    result = ReviewResult(
+        verdict="approve",
+        summary="<!-- guardrails-review -->\nNo defects found.",
+        comments=[],
+        model="test/m",
+        pr=1,
+    )
+    valid_lines: dict[str, set[int]] = {}
+
+    final, invalid = _build_final_result(result, valid_lines, pr=1)
+
+    assert final.verdict == "approve"
+    assert invalid == []
+
+
+def test_build_final_result_request_changes_from_comments():
+    """Non-agentic path: result.verdict=approve but comments present → request_changes."""
+    result = ReviewResult(
+        verdict="approve",
+        summary="<!-- guardrails-review -->\nfound issues",
+        comments=[
+            ReviewComment(path="src/foo.py", line=10, body="issue", severity="error")
+        ],
+        model="test/m",
+        pr=1,
+    )
+    valid_lines = {"src/foo.py": {10}}
+
+    final, invalid = _build_final_result(result, valid_lines, pr=1)
+
+    assert final.verdict == "request_changes"
+    assert len(final.comments) == 1
+
