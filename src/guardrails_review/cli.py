@@ -27,7 +27,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Print review without posting"
     )
     review_p.add_argument(
-        "--verbose", "-v", action="store_true",
+        "--verbose",
+        "-v",
+        action="store_true",
         help="Print each agentic loop iteration (tool calls and model reasoning)",
     )
 

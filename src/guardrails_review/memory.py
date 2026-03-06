@@ -129,7 +129,9 @@ def _prune_memory(memory: Memory) -> Memory:
     fps = memory.false_positives
     if len(fps) <= FALSE_POSITIVE_LIMIT:
         return dataclasses.replace(memory)
-    pruned = sorted(fps, key=lambda fp: fp.last_seen, reverse=True)[:FALSE_POSITIVE_LIMIT]  # noqa: E501
+    pruned = sorted(fps, key=lambda fp: fp.last_seen, reverse=True)[
+        :FALSE_POSITIVE_LIMIT
+    ]
     return dataclasses.replace(memory, false_positives=pruned)
 
 
@@ -298,7 +300,9 @@ def save_memory(memory: Memory) -> None:
             _create_orphan_branch(owner, repo)
             sha = ""
 
-        _put_file(owner, repo, content_json, sha, "chore: update guardrails-review memory")  # noqa: E501
+        _put_file(
+            owner, repo, content_json, sha, "chore: update guardrails-review memory"
+        )
     except RuntimeError as exc:
         logger.warning("Failed to save memory to %s branch: %s", MEMORY_BRANCH, exc)
 

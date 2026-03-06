@@ -80,12 +80,16 @@ def get_pr_diff(pr: int, *, unified_context: int = 5) -> str:
         base_ref = json.loads(meta.stdout)["baseRefName"]
         fetch = _subprocess.run(
             ["git", "fetch", "origin", base_ref],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if fetch.returncode == 0:
             diff = _subprocess.run(
                 ["git", "diff", f"origin/{base_ref}...HEAD", f"-U{unified_context}"],
-                capture_output=True, text=True, check=False,
+                capture_output=True,
+                text=True,
+                check=False,
             )
             if diff.returncode == 0 and diff.stdout.strip():
                 return diff.stdout
