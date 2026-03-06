@@ -196,7 +196,14 @@ def _build_final_result(
         for c in invalid_comments:
             summary += f"\n- `{c.path}:{c.line}`: {c.body}"
 
-    verdict = _compute_verdict(valid_comments + invalid_comments)
+    # Compute verdict from remaining comments, but never downgrade a
+    # request_changes verdict already set by the agentic path.
+    # Agentic reviews post inline comments directly and return comments=[],
+    # so _compute_verdict([]) would incorrectly produce "approve".
+    computed = _compute_verdict(valid_comments + invalid_comments)
+    verdict = "request_changes" if (
+        computed == "request_changes" or result.verdict == "request_changes"
+    ) else "approve"
 
     final = ReviewResult(
         verdict=verdict,
