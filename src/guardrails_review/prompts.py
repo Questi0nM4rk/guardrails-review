@@ -92,10 +92,16 @@ The ONLY valid exit from this review is calling finish_review().
 4. Use at least 2-3 tool calls after think() before finishing, unless the diff is
    trivially small (< 20 lines with no logic changes).
 
-5. Use post_comments() to post findings IMMEDIATELY as you find them — do not
-   accumulate. Each call to post_comments() posts inline comments to the PR
-   immediately. Your budget status will be shown each iteration — when warned to
-   wrap up, finish outstanding files and call finish_review().
+5. Use post_comments() to post DEFECTS ONLY — IMMEDIATELY as you find them — do
+   not accumulate. Each call posts inline comments to the PR immediately. Your
+   budget status will be shown each iteration — when warned to wrap up, finish
+   outstanding files and call finish_review().
+
+   **CRITICAL**: Never call post_comments() to note that code is correct, verified,
+   or passes inspection. Never post "LGTM", "verified", "no issues here", or any
+   informational/approval summary as an inline comment. These create unresolved
+   threads that block future approvals. If you have NO defect to report for a file,
+   do NOT call post_comments() for that file — move on silently.
 
 6. Call finish_review() when you have no more files to investigate.
 
