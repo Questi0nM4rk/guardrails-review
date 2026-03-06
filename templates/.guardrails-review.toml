@@ -1,37 +1,82 @@
 # Guardrails Review — LLM-powered PR reviewer
-# SETUP: Set model below, add OPENROUTER_KEY to GitHub secrets.
+# SETUP: Set model below, add OPENROUTER_KEY to GitHub secrets, place this
+# file at .guardrails-review.toml in the root of the target repository.
+#
+# The master review prompt is built-in and covers: bugs, security, concurrency,
+# resource leaks, API contract violations, hallucinated APIs, code duplication,
+# unnecessary complexity, and hardcoded secrets. Use this file to add context
+# the bot cannot infer from the diff alone — stack, conventions, hot paths.
 
 [config]
-model = "" # REQUIRED — e.g. "minimax/minimax-m2.5", "anthropic/claude-sonnet-4"
+model = "" # REQUIRED — e.g. "minimax/minimax-m2.5", "anthropic/claude-sonnet-4-5"
 
 [review]
 # max_diff_chars = 120000
 agentic = true          # Enable tool-use loop for context-gathering before review
 # max_iterations = 10   # Max tool-use rounds before forcing review submission
 
-extra_instructions = """
-Focus areas:
-- Security: secrets, injection, unsafe operations
-- Logic bugs and missing error handling
-- Type safety and null checks
-"""
-
-# Path-specific review instructions (optional)
-# Each entry adds extra guidance for files matching a glob pattern.
+# extra_instructions: Tell the bot what this codebase is so it can apply the
+# right mental model. Include: language/framework, auth pattern, ORM/DB layer,
+# concurrency model, and any patterns that are intentional (not bugs).
 #
-# [[review.path_instructions]]
-# path = "src/auth/**/*.py"
-# instructions = """
-# Pay extra attention to authentication logic:
-# - Check for missing permission checks before sensitive operations
-# - Ensure tokens are validated before use, not just decoded
-# - Look for hardcoded credentials or weak secret generation
+# Examples by stack:
+#
+# Python / FastAPI:
+# extra_instructions = """
+# Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic migrations, PostgreSQL.
+# Auth: every route must use Depends(get_current_user) — missing this is a critical bug.
+# ORM: raw SQL via text() is banned — use ORM or parameterised queries only.
+# All DB operations are async (await session.execute(...)). Sync calls inside async
+# functions are bugs (they block the event loop).
 # """
 #
-# [[review.path_instructions]]
-# path = "**/*.sql"
-# instructions = "Check for SQL injection via string concatenation or f-string interpolation."
+# TypeScript / Next.js:
+# extra_instructions = """
+# TypeScript 5, Next.js 14 App Router, Prisma ORM, PostgreSQL.
+# Auth: next-auth session checked server-side via getServerSession() — client-side
+# session checks are not sufficient for data access.
+# Server Actions must validate input with Zod before touching the DB.
+# "use client" components must not import server-only modules.
+# """
 #
+# Go / standard library:
+# extra_instructions = """
+# Go 1.22, net/http standard library, no ORM (raw database/sql), PostgreSQL.
+# All DB queries use parameterised $N placeholders — fmt.Sprintf into queries is a bug.
+# Context must be propagated to every DB call and HTTP request.
+# goroutines must not close over loop variables (fixed in Go 1.22, but flag anyway).
+# """
+extra_instructions = """
+<DESCRIBE YOUR STACK HERE — language, framework, auth pattern, DB/ORM, concurrency model>
+"""
+
+# Path-specific review instructions: add targeted rules for hot files or
+# security-sensitive directories the bot should scrutinise more carefully.
+
+# [[review.path_instructions]]
+# path = "src/auth/**"
+# instructions = """
+# Authentication boundary. Every function that returns user data or modifies
+# state must verify the caller's identity before acting. Missing auth check = critical.
+# Tokens must be validated (signature + expiry), not just decoded.
+# """
+
 # [[review.path_instructions]]
 # path = "migrations/**"
-# instructions = "Ensure migrations are reversible and idempotent. Check for missing ON CONFLICT clauses."
+# instructions = """
+# Migrations run in production with no rollback window.
+# - Every ALTER TABLE / DROP must have a reverse migration.
+# - INSERT / UPDATE in migrations must be idempotent (ON CONFLICT DO NOTHING).
+# - No application logic in migrations — data transforms belong in a job.
+# """
+
+# [[review.path_instructions]]
+# path = "**/*.sql"
+# instructions = "No string concatenation or f-string interpolation in SQL. Parameterised queries only."
+
+# [[review.path_instructions]]
+# path = "infra/**"
+# instructions = """
+# IaC changes. Flag: wildcard IAM permissions (Action: *), public S3 buckets,
+# security groups open to 0.0.0.0/0, unencrypted storage, missing KMS keys.
+# """
