@@ -196,7 +196,16 @@ def _build_final_result(
         for c in invalid_comments:
             summary += f"\n- `{c.path}:{c.line}`: {c.body}"
 
-    verdict = _compute_verdict(valid_comments + invalid_comments)
+    # Compute verdict from remaining comments, but never downgrade a
+    # request_changes verdict already set by the agentic path.
+    # Agentic reviews post inline comments directly and return comments=[],
+    # so _compute_verdict([]) would incorrectly produce "approve".
+    computed = _compute_verdict(valid_comments + invalid_comments)
+    verdict = (
+        "request_changes"
+        if (computed == "request_changes" or result.verdict == "request_changes")
+        else "approve"
+    )
 
     final = ReviewResult(
         verdict=verdict,
@@ -215,16 +224,22 @@ def _block_approval_if_unresolved(
     auto_resolved_ids: set[str],
     pr: int,
 ) -> ReviewResult:
-    """Block approval if unresolved threads remain from previous rounds."""
+    """Downgrade approval to comment if unresolved threads remain.
+
+    Nothing new was found (verdict=approve), but prior rounds left open threads.
+    Post a COMMENT review — not REQUEST_CHANGES — since the commit itself is clean.
+    The human still needs to action the open threads before merging.
+    """
     still_unresolved = _check_unresolved_threads(our_existing, auto_resolved_ids)
     if final.verdict == "approve" and still_unresolved:
         n_unresolved = len(still_unresolved)
         msg = (
-            f"\n\n---\n**{n_unresolved} unresolved thread(s) "
-            f"from previous review rounds remain open.**"
+            f"\n\n---\n**Nothing new found.** "
+            f"{n_unresolved} unresolved thread(s) from previous review rounds "
+            f"remain open — please resolve them before merging."
         )
         final = ReviewResult(
-            verdict="request_changes",
+            verdict="comment",
             summary=final.summary + msg,
             comments=final.comments,
             model=final.model,
@@ -232,49 +247,13 @@ def _block_approval_if_unresolved(
             pr=pr,
         )
         logger.info(
-            "Approval blocked: %d unresolved thread(s) from previous rounds",
+            "Approval → comment: %d unresolved thread(s) from previous rounds",
             n_unresolved,
         )
     return final
 
 
-def _post_and_set_status(
-    pr: int,
-    final: ReviewResult,
-    invalid_comments: list[ReviewComment],
-    repo_info: tuple[str, str, str],
-    project_dir: Path | None,
-) -> int:
-    """Post review to GitHub and set final commit status.
-
-    Args:
-        repo_info: Tuple of (owner, repo, commit_sha).
-
-    Returns 0 on success, 1 on failure.
-    """
-    owner, repo, commit_sha = repo_info
-    try:
-        post_review(pr, final, owner, repo, commit_sha)
-    except RuntimeError as exc:
-        logger.exception("Failed to post review")
-        print(f"Error posting review: {exc}")
-        _try_set_status(owner, repo, commit_sha, "error", "Review post failed")
-        return 1
-
-    save_review(final, project_dir)
-
-    n = len(final.comments) + len(invalid_comments)
-    if final.verdict == "approve":
-        _try_set_status(owner, repo, commit_sha, "success", "Approved")
-    else:
-        desc = f"{n} defect(s) found" if n > 0 else "Unresolved threads remain"
-        _try_set_status(owner, repo, commit_sha, "failure", desc)
-
-    print(f"Review posted for PR #{pr}: {final.verdict}")
-    return 0
-
-
-def run_review(  # noqa: PLR0915
+def run_review(  # noqa: PLR0915, PLR0912
     pr: int,
     *,
     dry_run: bool = False,
@@ -364,11 +343,17 @@ def run_review(  # noqa: PLR0915
     save_memory(updated_memory)
 
     # Set final commit status
+    # approve  → success + auto-merge if configured
+    # comment  → success (commit is clean; open threads are informational only)
+    # request_changes → failure (blocks merge)
     n = len(final.comments) + len(invalid_comments)
     if final.verdict == "approve":
         _try_set_status(owner, repo, commit_sha, "success", "Approved")
         if config.auto_merge and not dry_run:
             enable_auto_merge(pr, merge_method=config.merge_method)
+    elif final.verdict == "comment":
+        status_msg = "Clean — resolve open threads"
+        _try_set_status(owner, repo, commit_sha, "success", status_msg)
     else:
         desc = f"{n} defect(s) found" if n > 0 else "Unresolved threads remain"
         _try_set_status(owner, repo, commit_sha, "failure", desc)

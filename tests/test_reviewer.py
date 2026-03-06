@@ -9,6 +9,8 @@ from guardrails_review.memory import FalsePositive, Memory, ResolutionStats
 from guardrails_review.parser import parse_response, parse_submit_review_args
 from guardrails_review.prompts import build_agentic_messages, build_messages
 from guardrails_review.reviewer import (
+    _block_approval_if_unresolved,
+    _build_final_result,
     _compute_verdict,
     _print_dry_run,
     _run_agentic_review,
@@ -1174,8 +1176,8 @@ def test_run_review_dedup_removes_duplicate_comments(tmp_path, monkeypatch, caps
     assert len(posted) == 1
     # The duplicate comment should have been removed, so no inline comments posted
     assert len(posted[0].comments) == 0
-    # Despite 0 new comments, the existing unresolved thread blocks approval
-    assert posted[0].verdict == "request_changes"
+    # Unresolved thread → COMMENT verdict (not request_changes; commit is clean)
+    assert posted[0].verdict == "comment"
     assert "unresolved" in posted[0].summary.lower()
 
 
@@ -1317,7 +1319,11 @@ def _stub_clean_review(tmp_path, monkeypatch, *, existing_threads=None):
 
 
 def test_run_review_approve_blocked_by_unresolved_threads(tmp_path, monkeypatch):
-    """Review finds 0 new defects but 2 unresolved threads exist -> request_changes."""
+    """Review finds 0 new defects but 2 unresolved threads exist -> comment (not request_changes).
+
+    The commit is clean — bot posts a COMMENT review to remind the author to
+    resolve the threads, without blocking the merge gate.
+    """
     threads = [
         _make_marked_thread("thread-1", is_resolved=False),
         _make_marked_thread("thread-2", is_resolved=False),
@@ -1330,8 +1336,9 @@ def test_run_review_approve_blocked_by_unresolved_threads(tmp_path, monkeypatch)
     assert result == 0
     posted = captured["posted_reviews"]
     assert len(posted) == 1
-    assert posted[0].verdict == "request_changes"
+    assert posted[0].verdict == "comment"
     assert "2 unresolved" in posted[0].summary
+    assert "Nothing new found" in posted[0].summary
 
 
 def test_run_review_approve_when_all_threads_resolved(tmp_path, monkeypatch):
@@ -1401,11 +1408,15 @@ def test_dry_run_shows_unresolved_thread_count(tmp_path, monkeypatch, capsys):
     assert result == 0
     output = capsys.readouterr().out
     assert "unresolved" in output.lower()
-    assert "request_changes" in output
+    assert "comment" in output  # COMMENT verdict, not request_changes
 
 
-def test_run_review_unresolved_threads_set_failure_status(tmp_path, monkeypatch):
-    """When approval blocked by unresolved threads, commit status should be failure."""
+def test_run_review_unresolved_threads_set_success_status(tmp_path, monkeypatch):
+    """Unresolved threads with no new defects → COMMENT verdict → commit status success.
+
+    The commit itself is clean. Open threads are informational — they should not
+    block the merge gate via a failure status.
+    """
     threads = [
         _make_marked_thread("thread-1", is_resolved=False),
     ]
@@ -1416,7 +1427,7 @@ def test_run_review_unresolved_threads_set_failure_status(tmp_path, monkeypatch)
     # Find the final status (last one set, not the "pending" one)
     final_statuses = [s for s in captured["set_statuses"] if s[0] != "pending"]
     assert len(final_statuses) == 1
-    assert final_statuses[0][0] == "failure"
+    assert final_statuses[0][0] == "success"
 
 
 def test_run_review_loads_and_saves_memory(tmp_path, monkeypatch):
@@ -1757,3 +1768,122 @@ def test_agentic_finish_review_always_accepted(monkeypatch):
     # finish_review accepted on first call without nudge
     assert call_count["n"] == 1
     assert result.verdict == "approve"
+
+
+# ---------------------------------------------------------------------------
+# _block_approval_if_unresolved — comment verdict
+# ---------------------------------------------------------------------------
+
+
+def test_block_approval_comment_when_unresolved_threads(monkeypatch):
+    """approve → comment when unresolved threads remain (nothing new found)."""
+    monkeypatch.setattr(
+        f"{_REVIEWER}._check_unresolved_threads",
+        lambda threads, auto_resolved: [threads[0]],
+    )
+    final = ReviewResult(
+        verdict="approve",
+        summary="<!-- guardrails-review -->\nNo defects found.",
+        comments=[],
+        model="test/m",
+        pr=1,
+    )
+    thread = _make_thread(path="src/foo.py", line=10)
+    result = _block_approval_if_unresolved(final, [thread], set(), pr=1)
+
+    assert result.verdict == "comment"
+    assert "Nothing new found" in result.summary
+    assert "resolve them before merging" in result.summary
+
+
+def test_block_approval_no_change_when_no_unresolved(monkeypatch):
+    """approve → approve when all threads are resolved."""
+    monkeypatch.setattr(
+        f"{_REVIEWER}._check_unresolved_threads",
+        lambda threads, auto_resolved: [],
+    )
+    final = ReviewResult(
+        verdict="approve",
+        summary="<!-- guardrails-review -->\nNo defects found.",
+        comments=[],
+        model="test/m",
+        pr=1,
+    )
+    result = _block_approval_if_unresolved(final, [], set(), pr=1)
+
+    assert result.verdict == "approve"
+
+
+def test_block_approval_does_not_downgrade_request_changes(monkeypatch):
+    """request_changes is never changed to comment by this function."""
+    monkeypatch.setattr(
+        f"{_REVIEWER}._check_unresolved_threads",
+        lambda threads, auto_resolved: [threads[0]],
+    )
+    final = ReviewResult(
+        verdict="request_changes",
+        summary="<!-- guardrails-review -->\n1 defect found.",
+        comments=[],
+        model="test/m",
+        pr=1,
+    )
+    thread = _make_thread(path="src/foo.py", line=10)
+    result = _block_approval_if_unresolved(final, [thread], set(), pr=1)
+
+    assert result.verdict == "request_changes"
+
+
+# ---------------------------------------------------------------------------
+# _build_final_result — agentic verdict preservation
+# ---------------------------------------------------------------------------
+
+
+def test_build_final_result_preserves_agentic_request_changes():
+    """Agentic reviews post inline comments and return comments=[].
+
+    _build_final_result must NOT downgrade request_changes → approve just
+    because result.comments is empty (inline comments are already on GitHub).
+    """
+    result = ReviewResult(
+        verdict="request_changes",
+        summary="<!-- guardrails-review -->\n10 defect(s) found.",
+        comments=[],
+        model="test/m",
+        pr=1,
+    )
+    final, invalid = _build_final_result(result, valid_lines={}, pr=1)
+
+    assert final.verdict == "request_changes"
+    assert invalid == []
+
+
+def test_build_final_result_approve_when_clean():
+    """approve verdict and no comments → approve preserved."""
+    result = ReviewResult(
+        verdict="approve",
+        summary="<!-- guardrails-review -->\nNo defects found.",
+        comments=[],
+        model="test/m",
+        pr=1,
+    )
+    final, invalid = _build_final_result(result, valid_lines={}, pr=1)
+
+    assert final.verdict == "approve"
+    assert invalid == []
+
+
+def test_build_final_result_request_changes_from_non_agentic_comments():
+    """Non-agentic path: result has comments → request_changes regardless of verdict."""
+    result = ReviewResult(
+        verdict="approve",
+        summary="<!-- guardrails-review -->\nfound issues",
+        comments=[
+            ReviewComment(path="src/foo.py", line=10, body="issue", severity="error")
+        ],
+        model="test/m",
+        pr=1,
+    )
+    final, invalid = _build_final_result(result, valid_lines={"src/foo.py": {10}}, pr=1)
+
+    assert final.verdict == "request_changes"
+    assert len(final.comments) == 1
