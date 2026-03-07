@@ -65,6 +65,7 @@ def _load_file(path: Path) -> ReviewResult:
         model=data.get("model", ""),
         timestamp=data.get("timestamp", ""),
         pr=data.get("pr", 0),
+        review_id=data.get("review_id", 0),
     )
 
 

@@ -27,6 +27,27 @@ class DiffTooLargeError(RuntimeError):
         self.pr = pr
 
 
+_VERDICT_TO_EVENT: dict[str, str] = {
+    "approve": "APPROVE",
+    "request_changes": "REQUEST_CHANGES",
+    "comment": "COMMENT",
+}
+
+
+def _comment_to_entry(comment: ReviewComment) -> dict[str, object]:
+    """Serialize a ReviewComment to a GitHub API payload dict."""
+    entry: dict[str, object] = {
+        "path": comment.path,
+        "line": comment.line,
+        "body": comment.body,
+        "side": "RIGHT",
+    }
+    if comment.start_line is not None:
+        entry["start_line"] = comment.start_line
+        entry["start_side"] = "RIGHT"
+    return entry
+
+
 def run_gh(
     *args: str,
     timeout: int = 60,
@@ -73,19 +94,17 @@ def get_pr_diff(pr: int, *, unified_context: int = 5) -> str:
     Returns:
         Unified diff string with ``unified_context`` lines of context per hunk.
     """
-    import subprocess as _subprocess  # noqa: PLC0415
-
     try:
         meta = run_gh("pr", "view", str(pr), "--json", "baseRefName")
         base_ref = json.loads(meta.stdout)["baseRefName"]
-        fetch = _subprocess.run(
+        fetch = subprocess.run(
             ["git", "fetch", "origin", base_ref],
             capture_output=True,
             text=True,
             check=False,
         )
         if fetch.returncode == 0:
-            diff = _subprocess.run(
+            diff = subprocess.run(
                 ["git", "diff", f"origin/{base_ref}...HEAD", f"-U{unified_context}"],
                 capture_output=True,
                 text=True,
@@ -156,24 +175,9 @@ def post_review(
     Returns:
         True if the review was posted successfully.
     """
-    event_map = {
-        "approve": "APPROVE",
-        "request_changes": "REQUEST_CHANGES",
-    }
-    event = event_map.get(result.verdict, "COMMENT")
+    event = _VERDICT_TO_EVENT.get(result.verdict, "COMMENT")
 
-    comments: list[dict[str, object]] = []
-    for c in result.comments:
-        entry: dict[str, object] = {
-            "path": c.path,
-            "line": c.line,
-            "body": c.body,
-            "side": "RIGHT",
-        }
-        if c.start_line is not None:
-            entry["start_line"] = c.start_line
-            entry["start_side"] = "RIGHT"
-        comments.append(entry)
+    comments = [_comment_to_entry(c) for c in result.comments]
 
     payload = {
         "event": event,
@@ -248,16 +252,6 @@ def add_pending_review_comment(
         owner: Repository owner.
         repo: Repository name.
     """
-    entry: dict[str, object] = {
-        "path": comment.path,
-        "line": comment.line,
-        "body": comment.body,
-        "side": "RIGHT",
-    }
-    if comment.start_line is not None:
-        entry["start_line"] = comment.start_line
-        entry["start_side"] = "RIGHT"
-
     run_gh(
         "api",
         f"repos/{owner}/{repo}/pulls/{pr}/reviews/{review_id}/comments",
@@ -265,7 +259,7 @@ def add_pending_review_comment(
         "POST",
         "--input",
         "-",
-        input_data=json.dumps(entry),
+        input_data=json.dumps(_comment_to_entry(comment)),
     )
 
 
@@ -318,12 +312,7 @@ def submit_pending_review(  # noqa: PLR0913
         owner: Repository owner.
         repo: Repository name.
     """
-    event_map = {
-        "approve": "APPROVE",
-        "request_changes": "REQUEST_CHANGES",
-        "comment": "COMMENT",
-    }
-    event = event_map.get(verdict, "COMMENT")
+    event = _VERDICT_TO_EVENT.get(verdict, "COMMENT")
     payload = {"event": event, "body": body}
     run_gh(
         "api",

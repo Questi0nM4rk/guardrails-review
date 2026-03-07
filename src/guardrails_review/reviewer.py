@@ -145,8 +145,10 @@ def _try_auto_resolve(
     """
     resolved_ids: set[str] = set()
     try:
-        deleted = get_deleted_files(pr)
         unresolved = [t for t in our_existing if not t.is_resolved]
+        if not unresolved:
+            return resolved_ids
+        deleted = get_deleted_files(pr)
         resolutions = find_resolvable_threads(
             unresolved, valid_lines, deleted, commit_sha
         )
@@ -273,18 +275,15 @@ def run_review(  # noqa: PLR0915, PLR0912, C901
     Returns 0 on success, 1 on failure.
     """
     config = load_config(project_dir)
+    pr_meta = get_pr_metadata(pr)
+    owner, repo = get_repo_info()
     try:
         diff = get_pr_diff(pr)
     except DiffTooLargeError as exc:
         logger.warning("%s", exc)
-        owner, repo = get_repo_info()
-        pr_meta = get_pr_metadata(pr)
         set_commit_status(owner, repo, pr_meta.head_ref_oid, "success", str(exc))
         return 0
-    pr_meta = get_pr_metadata(pr)
     valid_lines = parse_diff_hunks(diff)
-
-    owner, repo = get_repo_info()
     memory = load_memory(owner, repo)
     memory_context = build_memory_context(memory)
 
@@ -450,7 +449,7 @@ def _validate_and_post(  # noqa: PLR0913
     all_posted: list[ReviewComment],
     tool_ctx: ToolContext,
     review_id: int = 0,
-) -> tuple[list[ReviewComment], str]:
+) -> tuple[list[ReviewComment], list[ReviewComment], str]:
     """Validate, deduplicate, and add a batch of inline comments to the pending review.
 
     Args:
@@ -533,7 +532,6 @@ class _AgenticState:
     review_id: int = 0
     pending_verdict: str | None = None
     pending_summary: str | None = None
-    no_progress_streak: int = 0
     budget_warning_sent: bool = False
     dropped_comments: list[ReviewComment] = field(default_factory=list)
 
