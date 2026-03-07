@@ -228,22 +228,22 @@ def _block_approval_if_unresolved(
     auto_resolved_ids: set[str],
     pr: int,
 ) -> ReviewResult:
-    """Downgrade approval to comment if unresolved threads remain.
+    """Downgrade approval to request_changes if unresolved threads remain.
 
     Nothing new was found (verdict=approve), but prior rounds left open threads.
-    Post a COMMENT review — not REQUEST_CHANGES — since the commit itself is clean.
-    The human still needs to action the open threads before merging.
+    Post REQUEST_CHANGES — the PR still needs changes because previous defects
+    are unresolved. This keeps the commit status as failure so the PR cannot merge.
     """
     still_unresolved = _check_unresolved_threads(our_existing, auto_resolved_ids)
     if final.verdict == "approve" and still_unresolved:
         n_unresolved = len(still_unresolved)
         msg = (
-            f"\n\n---\n**Nothing new found.** "
+            f"\n\n---\n**Nothing new found on this commit.** "
             f"{n_unresolved} unresolved thread(s) from previous review rounds "
             f"remain open — please resolve them before merging."
         )
         final = ReviewResult(
-            verdict="comment",
+            verdict="request_changes",
             summary=final.summary + msg,
             comments=final.comments,
             model=final.model,
@@ -252,7 +252,7 @@ def _block_approval_if_unresolved(
             review_id=final.review_id,
         )
         logger.info(
-            "Approval → comment: %d unresolved thread(s) from previous rounds",
+            "Approval → request_changes: %d unresolved thread(s) from previous rounds",
             n_unresolved,
         )
     return final

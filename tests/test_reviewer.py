@@ -1294,8 +1294,8 @@ def test_run_review_dedup_removes_duplicate_comments(tmp_path, monkeypatch, caps
     assert len(posted) == 1
     # The duplicate comment should have been removed, so no inline comments posted
     assert len(posted[0].comments) == 0
-    # Unresolved thread → COMMENT verdict (not request_changes; commit is clean)
-    assert posted[0].verdict == "comment"
+    # Unresolved thread → REQUEST_CHANGES (unresolved defects still block merge)
+    assert posted[0].verdict == "request_changes"
     assert "unresolved" in posted[0].summary.lower()
 
 
@@ -1437,10 +1437,10 @@ def _stub_clean_review(tmp_path, monkeypatch, *, existing_threads=None):
 
 
 def test_run_review_approve_blocked_by_unresolved_threads(tmp_path, monkeypatch):
-    """Review finds 0 new defects but 2 unresolved threads exist -> comment (not request_changes).
+    """Review finds 0 new defects but 2 unresolved threads exist -> request_changes.
 
-    The commit is clean — bot posts a COMMENT review to remind the author to
-    resolve the threads, without blocking the merge gate.
+    Previous defects are unresolved — bot posts REQUEST_CHANGES to keep the
+    merge gate closed until the author resolves them.
     """
     threads = [
         _make_marked_thread("thread-1", is_resolved=False),
@@ -1454,7 +1454,7 @@ def test_run_review_approve_blocked_by_unresolved_threads(tmp_path, monkeypatch)
     assert result == 0
     posted = captured["posted_reviews"]
     assert len(posted) == 1
-    assert posted[0].verdict == "comment"
+    assert posted[0].verdict == "request_changes"
     assert "2 unresolved" in posted[0].summary
     assert "Nothing new found" in posted[0].summary
 
@@ -1526,14 +1526,14 @@ def test_dry_run_shows_unresolved_thread_count(tmp_path, monkeypatch, capsys):
     assert result == 0
     output = capsys.readouterr().out
     assert "unresolved" in output.lower()
-    assert "comment" in output  # COMMENT verdict, not request_changes
+    assert "request_changes" in output  # REQUEST_CHANGES verdict, not comment
 
 
-def test_run_review_unresolved_threads_set_success_status(tmp_path, monkeypatch):
-    """Unresolved threads with no new defects → COMMENT verdict → commit status success.
+def test_run_review_unresolved_threads_set_failure_status(tmp_path, monkeypatch):
+    """Unresolved threads with no new defects → REQUEST_CHANGES → commit status failure.
 
-    The commit itself is clean. Open threads are informational — they should not
-    block the merge gate via a failure status.
+    Previous defects are still open — the merge gate must stay closed until the
+    author resolves them.
     """
     threads = [
         _make_marked_thread("thread-1", is_resolved=False),
@@ -1545,7 +1545,7 @@ def test_run_review_unresolved_threads_set_success_status(tmp_path, monkeypatch)
     # Find the final status (last one set, not the "pending" one)
     final_statuses = [s for s in captured["set_statuses"] if s[0] != "pending"]
     assert len(final_statuses) == 1
-    assert final_statuses[0][0] == "success"
+    assert final_statuses[0][0] == "failure"
 
 
 def test_run_review_loads_and_saves_memory(tmp_path, monkeypatch):
@@ -1889,12 +1889,12 @@ def test_agentic_submit_review_always_accepted(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _block_approval_if_unresolved — comment verdict
+# _block_approval_if_unresolved — request_changes verdict
 # ---------------------------------------------------------------------------
 
 
-def test_block_approval_comment_when_unresolved_threads(monkeypatch):
-    """approve → comment when unresolved threads remain (nothing new found)."""
+def test_block_approval_request_changes_when_unresolved_threads(monkeypatch):
+    """approve → request_changes when unresolved threads remain (nothing new found)."""
     monkeypatch.setattr(
         f"{_REVIEWER}._check_unresolved_threads",
         lambda threads, auto_resolved: [threads[0]],
@@ -1909,7 +1909,7 @@ def test_block_approval_comment_when_unresolved_threads(monkeypatch):
     thread = _make_thread(path="src/foo.py", line=10)
     result = _block_approval_if_unresolved(final, [thread], set(), pr=1)
 
-    assert result.verdict == "comment"
+    assert result.verdict == "request_changes"
     assert "Nothing new found" in result.summary
     assert "resolve them before merging" in result.summary
 
