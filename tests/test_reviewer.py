@@ -605,6 +605,10 @@ def _stub_agentic_deps(monkeypatch, *, existing_threads=None):
         f"{_REVIEWER}.add_pending_review_comment",
         lambda _rid, _pr, comment, _o, _r: pending_comments.append(comment),
     )
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_pending_review_comment_count",
+        lambda _rid, _pr, _o, _r: len(pending_comments),
+    )
     return pending_comments
 
 
@@ -933,6 +937,58 @@ def test_agentic_loop_submit_review_approves_when_no_comments(monkeypatch):
 
     assert result.verdict == "approve"
     assert result.comments == []
+
+
+def test_agentic_loop_dropped_comments_trust_approve_verdict(monkeypatch):
+    """If bot posted comments but GitHub dropped them all, trust the approve verdict.
+
+    Reproduces the zombie CHANGES_REQUESTED bug: bot posts a comment to the
+    pending review (API accepts it), then calls submit_review('approve').
+    GitHub silently drops the comment (e.g. line not in diff context).
+    The verdict override must fall back to approve, not force request_changes.
+    """
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
+    diff = (
+        "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n"
+        "@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+    )
+    pr_meta = _meta(head_ref_oid="sha123")
+    posted = _stub_agentic_deps(monkeypatch)
+
+    # Override: comments "added" to all_posted but pending review has 0 (GitHub dropped)
+    monkeypatch.setattr(
+        f"{_REVIEWER}.get_pending_review_comment_count",
+        lambda _rid, _pr, _o, _r: 0,  # GitHub dropped the comment
+    )
+
+    call_n = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_n["n"] += 1
+        usage = {"prompt_tokens": 10_000, "completion_tokens": 50}
+        if call_n["n"] == 1:
+            # Bot posts a comment (which will be "dropped" by GitHub mock)
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCall(id="c1", name="post_comments", arguments='{"comments": [{"path": "f.py", "line": 2, "body": "Issue", "severity": "error"}]}')],
+                finish_reason="tool_calls",
+                usage=usage,
+            )
+        # Then bot approves
+        return LLMResponse(
+            content=None,
+            tool_calls=[ToolCall(id="c2", name="submit_review", arguments='{"verdict": "approve", "summary": "No defects found."}')],
+            finish_reason="tool_calls",
+            usage=usage,
+        )
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    # Comment was "added" locally but GitHub has 0 → trust approve
+    assert len(posted) == 1, "comment was added to pending review"
+    assert result.verdict == "approve"
 
 
 def test_run_resolve_failure_returns_1(monkeypatch, capsys):
