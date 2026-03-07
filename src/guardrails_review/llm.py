@@ -12,6 +12,7 @@ from guardrails_review.types import LLMResponse, ToolCall
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _TIMEOUT_SECONDS = 120
+_TIMEOUT_MSG = f"OpenRouter request timed out after {_TIMEOUT_SECONDS}s"
 
 
 def call_openrouter(
@@ -126,12 +127,10 @@ def _send_request(  # noqa: PLR0915
         raise RuntimeError(msg) from exc
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, TimeoutError):
-            msg = f"OpenRouter request timed out after {_TIMEOUT_SECONDS}s"
-            raise TimeoutError(msg) from exc
+            raise TimeoutError(_TIMEOUT_MSG) from exc
         raise
     except TimeoutError as exc:
-        msg = f"OpenRouter request timed out after {_TIMEOUT_SECONDS}s"
-        raise TimeoutError(msg) from exc
+        raise TimeoutError(_TIMEOUT_MSG) from exc
 
     response_data = json.loads(resp.read().decode())
     usage: dict[str, int] = response_data.get("usage", {})

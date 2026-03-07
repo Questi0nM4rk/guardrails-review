@@ -310,6 +310,7 @@ def run_review(  # noqa: PLR0915, PLR0912, C901
             previous_comments=previous_comments,
             valid_lines=valid_lines,
             verbose=verbose,
+            existing_threads=our_existing,
         )
     else:
         result = _run_oneshot_review(
@@ -571,6 +572,7 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
     previous_comments: list[ReviewThread] | None = None,
     valid_lines: dict[str, set[int]] | None = None,
     verbose: bool = False,  # noqa: FBT001, FBT002
+    existing_threads: list[ReviewThread] | None = None,
 ) -> ReviewResult:
     """Run the agentic tool-use review loop with incremental posting.
 
@@ -593,12 +595,16 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
         reserve_tokens=int(ctx_length * 0.15),
     )
 
-    existing_threads: list[ReviewThread] = []
-    try:
-        all_threads = get_review_threads(pr, owner, repo)
-        existing_threads = get_our_threads(all_threads)
-    except RuntimeError:
-        logger.warning("Failed to fetch threads for dedup (non-fatal)")
+    _existing_threads: list[ReviewThread]
+    if existing_threads is not None:
+        _existing_threads = existing_threads
+    else:
+        try:
+            all_threads = get_review_threads(pr, owner, repo)
+            _existing_threads = get_our_threads(all_threads)
+        except RuntimeError:
+            logger.warning("Failed to fetch threads for dedup (non-fatal)")
+            _existing_threads = []
 
     ci_context = build_ci_context(owner, repo, commit_sha)
     messages: list[dict[str, Any]] = build_agentic_messages(
@@ -617,7 +623,7 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
     state = _AgenticState(
         messages=messages,
         valid_lines=valid_lines or parse_diff_hunks(diff),
-        existing_threads=existing_threads,
+        existing_threads=_existing_threads,
         all_posted=[],
         tool_ctx=tool_ctx,
         budget=budget,

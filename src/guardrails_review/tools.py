@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 from dataclasses import dataclass
 import json
 import logging
@@ -10,6 +11,7 @@ import re
 from typing import Any
 
 from guardrails_review.github import run_gh
+from guardrails_review.memory import build_memory_context, load_memory, save_memory
 
 logger = logging.getLogger(__name__)
 
@@ -341,8 +343,6 @@ _GITHUB_QUALIFIER_RE = re.compile(
 
 def _read_memory(_args: dict[str, Any], ctx: ToolContext) -> str:
     """Return formatted memory for this repository."""
-    from guardrails_review.memory import build_memory_context, load_memory  # noqa: PLC0415
-
     memory = load_memory(ctx.owner, ctx.repo)
     context = build_memory_context(memory)
     return context or "Memory is empty — no conventions recorded yet."
@@ -350,10 +350,6 @@ def _read_memory(_args: dict[str, Any], ctx: ToolContext) -> str:
 
 def _update_memory(args: dict[str, Any], ctx: ToolContext) -> str:
     """Append a convention to this repository's memory."""
-    import dataclasses  # noqa: PLC0415
-
-    from guardrails_review.memory import load_memory, save_memory  # noqa: PLC0415
-
     convention = args.get("convention", "").strip()
     if not convention:
         return "No convention provided — nothing written."

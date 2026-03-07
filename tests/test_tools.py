@@ -324,8 +324,7 @@ def test_read_memory_returns_context(monkeypatch, ctx):
         false_positives=[],
         resolution_stats=ResolutionStats(0, 0, 0, 0, 0.0),
     )
-    monkeypatch.setattr("guardrails_review.tools._read_memory.__module__", "guardrails_review.tools")
-    monkeypatch.setattr("guardrails_review.memory.load_memory", lambda o, r: fake_memory)
+    monkeypatch.setattr("guardrails_review.tools.load_memory", lambda o, r: fake_memory)
 
     result = execute_tool("read_memory", "{}", ctx)
 
@@ -343,7 +342,7 @@ def test_read_memory_empty_returns_message(monkeypatch, ctx):
         false_positives=[],
         resolution_stats=ResolutionStats(0, 0, 0, 0, 0.0),
     )
-    monkeypatch.setattr("guardrails_review.memory.load_memory", lambda o, r: empty_memory)
+    monkeypatch.setattr("guardrails_review.tools.load_memory", lambda o, r: empty_memory)
 
     result = execute_tool("read_memory", "{}", ctx)
 
@@ -366,8 +365,8 @@ def test_update_memory_adds_convention(monkeypatch, ctx):
         false_positives=[],
         resolution_stats=ResolutionStats(0, 0, 0, 0, 0.0),
     )
-    monkeypatch.setattr("guardrails_review.memory.load_memory", lambda o, r: base_memory)
-    monkeypatch.setattr("guardrails_review.memory.save_memory", lambda m: saved.append(m))
+    monkeypatch.setattr("guardrails_review.tools.load_memory", lambda o, r: base_memory)
+    monkeypatch.setattr("guardrails_review.tools.save_memory", lambda m: saved.append(m))
 
     result = execute_tool(
         "update_memory",
@@ -392,8 +391,8 @@ def test_update_memory_skips_duplicate(monkeypatch, ctx):
         resolution_stats=ResolutionStats(0, 0, 0, 0, 0.0),
     )
     saved = []
-    monkeypatch.setattr("guardrails_review.memory.load_memory", lambda o, r: existing)
-    monkeypatch.setattr("guardrails_review.memory.save_memory", lambda m: saved.append(m))
+    monkeypatch.setattr("guardrails_review.tools.load_memory", lambda o, r: existing)
+    monkeypatch.setattr("guardrails_review.tools.save_memory", lambda m: saved.append(m))
 
     result = execute_tool(
         "update_memory",
@@ -417,8 +416,8 @@ def test_update_memory_empty_convention(monkeypatch, ctx):
         resolution_stats=ResolutionStats(0, 0, 0, 0, 0.0),
     )
     saved = []
-    monkeypatch.setattr("guardrails_review.memory.load_memory", lambda o, r: empty_memory)
-    monkeypatch.setattr("guardrails_review.memory.save_memory", lambda m: saved.append(m))
+    monkeypatch.setattr("guardrails_review.tools.load_memory", lambda o, r: empty_memory)
+    monkeypatch.setattr("guardrails_review.tools.save_memory", lambda m: saved.append(m))
 
     result = execute_tool("update_memory", '{"convention": ""}', ctx)
 
