@@ -159,18 +159,22 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "description": (
                 "Submit your review. This is your final action — call it when "
                 "you have finished investigating all files. "
-                "Set verdict to 'request_changes' if you found any defects, "
-                "'approve' if the code is clean."
+                "Use 'request_changes' if you found defects, "
+                "'approve' if code is clean and no unresolved threads remain, "
+                "'comment' if code is clean but unresolved threads from previous "
+                "runs still exist (use this to confirm the commit is clean without "
+                "overriding the existing block)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "verdict": {
                         "type": "string",
-                        "enum": ["approve", "request_changes"],
+                        "enum": ["approve", "request_changes", "comment"],
                         "description": (
                             "'request_changes' if defects were found, "
-                            "'approve' if the code is clean."
+                            "'approve' if code is clean and no open threads remain, "
+                            "'comment' if code is clean but open threads exist."
                         ),
                     },
                     "summary": {
@@ -182,6 +186,49 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
                     },
                 },
                 "required": ["verdict", "summary"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_memory",
+            "description": (
+                "Read this bot's accumulated knowledge about the repository: "
+                "conventions, patterns, and known false positives recorded from "
+                "previous review rounds. Call this at the start of every review."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_memory",
+            "description": (
+                "Persist a new convention or false-positive pattern to the bot's "
+                "memory so future reviews benefit from it. Call this when you "
+                "learn something about how this codebase is structured that is "
+                "not already in memory."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "convention": {
+                        "type": "string",
+                        "description": (
+                            "A convention or pattern observed in this codebase. "
+                            "E.g. 'All DB queries use parameterised placeholders — "
+                            "string interpolation in SQL is always a bug here.' "
+                            "Prefix with 'FALSE POSITIVE: ' to record a pattern "
+                            "that looks like a bug but is intentional."
+                        ),
+                    },
+                },
+                "required": ["convention"],
             },
         },
     },
@@ -216,6 +263,8 @@ def execute_tool(name: str, arguments: str, ctx: ToolContext) -> str:
         "list_changed_files": _list_changed_files,
         "search_code": _search_code,
         "think": _think,
+        "read_memory": _read_memory,
+        "update_memory": _update_memory,
     }
 
     handler = dispatch.get(name)
@@ -288,6 +337,36 @@ def _list_changed_files(_args: dict[str, Any], ctx: ToolContext) -> str:
 _GITHUB_QUALIFIER_RE = re.compile(
     r"\b(repo|org|user|path|language|filename):\S+", re.IGNORECASE
 )
+
+
+def _read_memory(_args: dict[str, Any], ctx: ToolContext) -> str:
+    """Return formatted memory for this repository."""
+    from guardrails_review.memory import build_memory_context, load_memory  # noqa: PLC0415
+
+    memory = load_memory(ctx.owner, ctx.repo)
+    context = build_memory_context(memory)
+    return context or "Memory is empty — no conventions recorded yet."
+
+
+def _update_memory(args: dict[str, Any], ctx: ToolContext) -> str:
+    """Append a convention to this repository's memory."""
+    import dataclasses  # noqa: PLC0415
+
+    from guardrails_review.memory import load_memory, save_memory  # noqa: PLC0415
+
+    convention = args.get("convention", "").strip()
+    if not convention:
+        return "No convention provided — nothing written."
+
+    memory = load_memory(ctx.owner, ctx.repo)
+    if convention in memory.conventions:
+        return "Convention already recorded."
+
+    new_memory = dataclasses.replace(
+        memory, conventions=[*memory.conventions, convention]
+    )
+    save_memory(new_memory)
+    return f"Saved: {convention}"
 
 
 def _search_code(args: dict[str, Any], ctx: ToolContext) -> str:

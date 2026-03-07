@@ -36,6 +36,8 @@ def test_agentic_prompt_contains_tool_instructions():
     assert "submit_review" in _AGENTIC_SYSTEM_PROMPT
     assert "read_file" in _AGENTIC_SYSTEM_PROMPT
     assert "search_code" in _AGENTIC_SYSTEM_PROMPT
+    assert "read_memory" in _AGENTIC_SYSTEM_PROMPT
+    assert "update_memory" in _AGENTIC_SYSTEM_PROMPT
     assert "finish_review" not in _AGENTIC_SYSTEM_PROMPT
 
 
@@ -111,9 +113,9 @@ def test_build_agentic_messages_uses_agentic_prompt():
     messages = build_agentic_messages("diff", config, _meta())
 
     assert len(messages) == 2
-    assert "tools" in messages[0]["content"].lower()
     assert "post_comments" in messages[0]["content"]
     assert "submit_review" in messages[0]["content"]
+    assert "Phase 1" in messages[0]["content"]  # phase structure is agentic-only
 
 
 def test_build_user_content_includes_memory_context():
@@ -170,6 +172,23 @@ def test_agentic_prompt_contains_ai_defect_categories():
     assert "Verification protocol" in _AGENTIC_SYSTEM_PROMPT
     assert "search_code" in _AGENTIC_SYSTEM_PROMPT
     assert "model_dump" in _AGENTIC_SYSTEM_PROMPT  # concrete example
+
+
+def test_agentic_prompt_explains_three_verdicts():
+    """Agentic prompt explains approve / request_changes / comment verdicts."""
+    assert "approve" in _AGENTIC_SYSTEM_PROMPT
+    assert "request_changes" in _AGENTIC_SYSTEM_PROMPT
+    assert "comment" in _AGENTIC_SYSTEM_PROMPT
+    # The comment verdict should reference unresolved threads
+    assert "Unresolved" in _AGENTIC_SYSTEM_PROMPT or "unresolved" in _AGENTIC_SYSTEM_PROMPT
+
+
+def test_agentic_prompt_has_phase_structure():
+    """Agentic prompt uses Phase-based review structure."""
+    assert "Phase 1" in _AGENTIC_SYSTEM_PROMPT
+    assert "Phase 2" in _AGENTIC_SYSTEM_PROMPT
+    assert "Phase 3" in _AGENTIC_SYSTEM_PROMPT
+    assert "Phase 4" in _AGENTIC_SYSTEM_PROMPT
 
 
 def test_build_agentic_messages_injects_previous_comments():

@@ -266,7 +266,7 @@ def test_execute_tool_submit_review_not_dispatched(ctx):
 
 def test_tool_definitions_have_required_structure():
     """All tool definitions have the expected OpenRouter format."""
-    assert len(TOOL_DEFINITIONS) == 6
+    assert len(TOOL_DEFINITIONS) == 8
     names = {t["function"]["name"] for t in TOOL_DEFINITIONS}
     assert names == {
         "read_file",
@@ -275,6 +275,8 @@ def test_tool_definitions_have_required_structure():
         "think",
         "post_comments",
         "submit_review",
+        "read_memory",
+        "update_memory",
     }
     for tool in TOOL_DEFINITIONS:
         assert tool["type"] == "function"
@@ -300,5 +302,125 @@ def test_submit_review_schema_has_verdict_and_summary():
     params = tool["function"]["parameters"]
     assert "verdict" in params["properties"]
     assert "summary" in params["properties"]
-    assert params["properties"]["verdict"]["enum"] == ["approve", "request_changes"]
+    assert set(params["properties"]["verdict"]["enum"]) == {
+        "approve",
+        "request_changes",
+        "comment",
+    }
     assert set(params["required"]) == {"verdict", "summary"}
+
+
+# --- read_memory ---
+
+
+def test_read_memory_returns_context(monkeypatch, ctx):
+    """read_memory calls load_memory and returns formatted context."""
+    from guardrails_review.memory import Memory, ResolutionStats
+
+    fake_memory = Memory(
+        version=1,
+        repo="acme/widgets",
+        conventions=["Uses gh CLI for all GitHub ops"],
+        false_positives=[],
+        resolution_stats=ResolutionStats(0, 0, 0, 0, 0.0),
+    )
+    monkeypatch.setattr("guardrails_review.tools._read_memory.__module__", "guardrails_review.tools")
+    monkeypatch.setattr("guardrails_review.memory.load_memory", lambda o, r: fake_memory)
+
+    result = execute_tool("read_memory", "{}", ctx)
+
+    assert "gh CLI" in result
+
+
+def test_read_memory_empty_returns_message(monkeypatch, ctx):
+    """read_memory returns helpful message when memory is empty."""
+    from guardrails_review.memory import Memory, ResolutionStats
+
+    empty_memory = Memory(
+        version=1,
+        repo="acme/widgets",
+        conventions=[],
+        false_positives=[],
+        resolution_stats=ResolutionStats(0, 0, 0, 0, 0.0),
+    )
+    monkeypatch.setattr("guardrails_review.memory.load_memory", lambda o, r: empty_memory)
+
+    result = execute_tool("read_memory", "{}", ctx)
+
+    assert "empty" in result.lower()
+
+
+# --- update_memory ---
+
+
+def test_update_memory_adds_convention(monkeypatch, ctx):
+    """update_memory appends convention and saves memory."""
+    import dataclasses
+    from guardrails_review.memory import Memory, ResolutionStats
+
+    saved = []
+    base_memory = Memory(
+        version=1,
+        repo="acme/widgets",
+        conventions=[],
+        false_positives=[],
+        resolution_stats=ResolutionStats(0, 0, 0, 0, 0.0),
+    )
+    monkeypatch.setattr("guardrails_review.memory.load_memory", lambda o, r: base_memory)
+    monkeypatch.setattr("guardrails_review.memory.save_memory", lambda m: saved.append(m))
+
+    result = execute_tool(
+        "update_memory",
+        '{"convention": "All DB queries use parameterised placeholders"}',
+        ctx,
+    )
+
+    assert "Saved" in result
+    assert len(saved) == 1
+    assert "All DB queries use parameterised placeholders" in saved[0].conventions
+
+
+def test_update_memory_skips_duplicate(monkeypatch, ctx):
+    """update_memory returns early if convention already recorded."""
+    from guardrails_review.memory import Memory, ResolutionStats
+
+    existing = Memory(
+        version=1,
+        repo="acme/widgets",
+        conventions=["existing convention"],
+        false_positives=[],
+        resolution_stats=ResolutionStats(0, 0, 0, 0, 0.0),
+    )
+    saved = []
+    monkeypatch.setattr("guardrails_review.memory.load_memory", lambda o, r: existing)
+    monkeypatch.setattr("guardrails_review.memory.save_memory", lambda m: saved.append(m))
+
+    result = execute_tool(
+        "update_memory",
+        '{"convention": "existing convention"}',
+        ctx,
+    )
+
+    assert "already" in result.lower()
+    assert len(saved) == 0
+
+
+def test_update_memory_empty_convention(monkeypatch, ctx):
+    """update_memory with empty convention returns error without saving."""
+    from guardrails_review.memory import Memory, ResolutionStats
+
+    empty_memory = Memory(
+        version=1,
+        repo="acme/widgets",
+        conventions=[],
+        false_positives=[],
+        resolution_stats=ResolutionStats(0, 0, 0, 0, 0.0),
+    )
+    saved = []
+    monkeypatch.setattr("guardrails_review.memory.load_memory", lambda o, r: empty_memory)
+    monkeypatch.setattr("guardrails_review.memory.save_memory", lambda m: saved.append(m))
+
+    result = execute_tool("update_memory", '{"convention": ""}', ctx)
+
+    assert "No convention" in result
+    assert len(saved) == 0

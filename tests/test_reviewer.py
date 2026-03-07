@@ -95,9 +95,9 @@ def test_build_agentic_messages_uses_agentic_prompt():
     messages = build_agentic_messages("diff", config, _meta())
 
     assert len(messages) == 2
-    assert "tools" in messages[0]["content"].lower()
     assert "post_comments" in messages[0]["content"]
     assert "submit_review" in messages[0]["content"]
+    assert "Phase 1" in messages[0]["content"]
 
 
 def test_parse_response_valid_json():
@@ -1294,8 +1294,8 @@ def test_run_review_dedup_removes_duplicate_comments(tmp_path, monkeypatch, caps
     assert len(posted) == 1
     # The duplicate comment should have been removed, so no inline comments posted
     assert len(posted[0].comments) == 0
-    # Unresolved thread → REQUEST_CHANGES (unresolved defects still block merge)
-    assert posted[0].verdict == "request_changes"
+    # Unresolved thread → COMMENT (original REQUEST_CHANGES stays; commit status = failure)
+    assert posted[0].verdict == "comment"
     assert "unresolved" in posted[0].summary.lower()
 
 
@@ -1437,10 +1437,11 @@ def _stub_clean_review(tmp_path, monkeypatch, *, existing_threads=None):
 
 
 def test_run_review_approve_blocked_by_unresolved_threads(tmp_path, monkeypatch):
-    """Review finds 0 new defects but 2 unresolved threads exist -> request_changes.
+    """Review finds 0 new defects but 2 unresolved threads exist -> comment.
 
-    Previous defects are unresolved — bot posts REQUEST_CHANGES to keep the
-    merge gate closed until the author resolves them.
+    The commit is clean but prior defects are unresolved — bot posts COMMENT
+    so the original REQUEST_CHANGES stays visible. Commit status is set to
+    failure to keep the merge gate closed.
     """
     threads = [
         _make_marked_thread("thread-1", is_resolved=False),
@@ -1454,7 +1455,7 @@ def test_run_review_approve_blocked_by_unresolved_threads(tmp_path, monkeypatch)
     assert result == 0
     posted = captured["posted_reviews"]
     assert len(posted) == 1
-    assert posted[0].verdict == "request_changes"
+    assert posted[0].verdict == "comment"
     assert "2 unresolved" in posted[0].summary
     assert "Nothing new found" in posted[0].summary
 
@@ -1526,7 +1527,7 @@ def test_dry_run_shows_unresolved_thread_count(tmp_path, monkeypatch, capsys):
     assert result == 0
     output = capsys.readouterr().out
     assert "unresolved" in output.lower()
-    assert "request_changes" in output  # REQUEST_CHANGES verdict, not comment
+    assert "comment" in output  # COMMENT verdict — commit clean, existing block stays
 
 
 def test_run_review_unresolved_threads_set_failure_status(tmp_path, monkeypatch):
@@ -1889,12 +1890,12 @@ def test_agentic_submit_review_always_accepted(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _block_approval_if_unresolved — request_changes verdict
+# _block_approval_if_unresolved — comment verdict
 # ---------------------------------------------------------------------------
 
 
-def test_block_approval_request_changes_when_unresolved_threads(monkeypatch):
-    """approve → request_changes when unresolved threads remain (nothing new found)."""
+def test_block_approval_comment_when_unresolved_threads(monkeypatch):
+    """approve → comment when unresolved threads remain (nothing new found)."""
     monkeypatch.setattr(
         f"{_REVIEWER}._check_unresolved_threads",
         lambda threads, auto_resolved: [threads[0]],
@@ -1909,7 +1910,7 @@ def test_block_approval_request_changes_when_unresolved_threads(monkeypatch):
     thread = _make_thread(path="src/foo.py", line=10)
     result = _block_approval_if_unresolved(final, [thread], set(), pr=1)
 
-    assert result.verdict == "request_changes"
+    assert result.verdict == "comment"
     assert "Nothing new found" in result.summary
     assert "resolve them before merging" in result.summary
 

@@ -228,11 +228,12 @@ def _block_approval_if_unresolved(
     auto_resolved_ids: set[str],
     pr: int,
 ) -> ReviewResult:
-    """Downgrade approval to request_changes if unresolved threads remain.
+    """Downgrade approval to comment if unresolved threads remain.
 
     Nothing new was found (verdict=approve), but prior rounds left open threads.
-    Post REQUEST_CHANGES — the PR still needs changes because previous defects
-    are unresolved. This keeps the commit status as failure so the PR cannot merge.
+    Post a COMMENT — not REQUEST_CHANGES — so the original REQUEST_CHANGES from
+    the previous run stays visible and the PR author can see what still needs fixing.
+    Commit status is set to failure by run_review so the merge gate stays closed.
     """
     still_unresolved = _check_unresolved_threads(our_existing, auto_resolved_ids)
     if final.verdict == "approve" and still_unresolved:
@@ -243,7 +244,7 @@ def _block_approval_if_unresolved(
             f"remain open — please resolve them before merging."
         )
         final = ReviewResult(
-            verdict="request_changes",
+            verdict="comment",
             summary=final.summary + msg,
             comments=final.comments,
             model=final.model,
@@ -252,7 +253,7 @@ def _block_approval_if_unresolved(
             review_id=final.review_id,
         )
         logger.info(
-            "Approval → request_changes: %d unresolved thread(s) from previous rounds",
+            "Approval → comment: %d unresolved thread(s) from previous rounds",
             n_unresolved,
         )
     return final
@@ -362,8 +363,7 @@ def run_review(  # noqa: PLR0915, PLR0912, C901
         if config.auto_merge and not dry_run:
             enable_auto_merge(pr, merge_method=config.merge_method)
     elif final.verdict == "comment":
-        status_msg = "Clean — resolve open threads"
-        _try_set_status(owner, repo, commit_sha, "success", status_msg)
+        _try_set_status(owner, repo, commit_sha, "failure", "Resolve open threads")
     else:
         desc = f"{n} defect(s) found" if n > 0 else "Unresolved threads remain"
         _try_set_status(owner, repo, commit_sha, "failure", desc)
