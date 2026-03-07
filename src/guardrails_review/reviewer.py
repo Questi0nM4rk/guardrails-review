@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -516,7 +516,7 @@ def _validate_and_post(  # noqa: PLR0913
         parts.append(f"Dropped {len(invalid)} comment(s) on invalid lines: {dropped}")
     if len(valid) - len(deduped) > 0:
         parts.append(f"Skipped {len(valid) - len(deduped)} duplicate(s).")
-    return deduped, " ".join(parts)
+    return deduped, invalid, " ".join(parts)
 
 
 @dataclass
@@ -534,8 +534,7 @@ class _AgenticState:
     pending_summary: str | None = None
     no_progress_streak: int = 0
     budget_warning_sent: bool = False
-
-
+    dropped_comments: list[ReviewComment] = field(default_factory=list)
 
 
 def _inject_budget_messages(state: _AgenticState) -> None:
@@ -767,7 +766,7 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
                     )
                     break
 
-                new, feedback = _validate_and_post(
+                new, dropped, feedback = _validate_and_post(
                     tc.arguments,
                     state.valid_lines,
                     state.existing_threads,
@@ -776,11 +775,11 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
                     review_id=state.review_id,
                 )
                 state.all_posted.extend(new)
+                state.dropped_comments.extend(dropped)
                 n_total = len(state.all_posted)
                 n_added = len(new)
                 print(
-                    f"[agentic] added {n_added} comment(s) to review"
-                    f" (total: {n_total})"
+                    f"[agentic] added {n_added} comment(s) to review (total: {n_total})"
                 )
                 state.messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": feedback}
@@ -823,8 +822,12 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
     else:
         verdict = state.pending_verdict or "approve"
     summary = state.pending_summary or _build_agentic_summary(
-        state.all_posted, state.budget
+        state.all_posted, state.budget, state.dropped_comments
     )
+    # Supplement LLM-provided summary with dropped comment details so defects
+    # are visible in the review body even when inline markers couldn't be posted.
+    if state.pending_summary and state.dropped_comments:
+        summary += _render_dropped_comments(state.dropped_comments)
     return ReviewResult(
         verdict=verdict,
         summary=summary,
@@ -858,9 +861,24 @@ def _append_assistant_tool_msg(
     messages.append(assistant_msg)
 
 
+def _render_dropped_comments(comments: list[ReviewComment]) -> str:
+    """Render comments that couldn't be posted inline as a markdown text block."""
+    lines = [
+        f"\n\n### {len(comments)} finding(s) outside diff context",
+        "_These defects are in unchanged lines — inline markers not possible:_",
+    ]
+    for c in comments:
+        body = c.body
+        if body.startswith(REVIEW_MARKER):
+            body = body[len(REVIEW_MARKER) :].lstrip("\n")
+        lines.append(f"\n**`{c.path}:{c.line}`**\n\n{body}")
+    return "\n".join(lines)
+
+
 def _build_agentic_summary(
     all_posted: list[ReviewComment],
     budget: TokenBudget,
+    dropped_comments: list[ReviewComment] | None = None,
 ) -> str:
     """Build a summary for the final agentic review."""
     parts = [REVIEW_MARKER]
@@ -869,6 +887,8 @@ def _build_agentic_summary(
         parts.append(f"\n{n} defect(s) found and posted as inline comments.")
     else:
         parts.append("\nNo defects found.")
+    if dropped_comments:
+        parts.append(_render_dropped_comments(dropped_comments))
     parts.append(
         f"\n\n*Budget: {budget.last_prompt_tokens:,} / "
         f"{budget.max_tokens:,} tokens used.*"

@@ -991,6 +991,64 @@ def test_agentic_loop_dropped_comments_trust_approve_verdict(monkeypatch):
     assert result.verdict == "approve"
 
 
+def test_agentic_loop_invalid_line_comments_appear_in_review_body(monkeypatch):
+    """Dropped inline comments (lines outside diff) must appear in the review body.
+
+    When the LLM posts a comment on a line not in the diff, validate_comments
+    drops it. The defect details should still be surfaced in the review body text
+    so the PR author can see what was found.
+    """
+    config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
+    # Diff only has line 2 as a changed line
+    diff = (
+        "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n"
+        "@@ -1,2 +1,3 @@\n ctx\n+new\n end\n"
+    )
+    pr_meta = _meta(head_ref_oid="sha123")
+    _stub_agentic_deps(monkeypatch)
+
+    call_n = {"n": 0}
+
+    def fake_call(messages, model, *, tools, tool_choice=None):
+        call_n["n"] += 1
+        usage = {"prompt_tokens": 10_000, "completion_tokens": 50}
+        if call_n["n"] == 1:
+            # Bot tries to post on line 999 — NOT in the diff, will be dropped
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="post_comments",
+                        arguments='{"comments": [{"path": "f.py", "line": 999, "body": "Missing type annotation", "severity": "error"}]}',
+                    )
+                ],
+                finish_reason="tool_calls",
+                usage=usage,
+            )
+        return LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="c2",
+                    name="submit_review",
+                    arguments='{"verdict": "request_changes", "summary": "Found a defect."}',
+                )
+            ],
+            finish_reason="tool_calls",
+            usage=usage,
+        )
+
+    monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
+
+    result = _run_agentic_review(config, diff, pr_meta, pr=1)
+
+    assert result.verdict == "request_changes"
+    # The dropped comment details must appear in the review body
+    assert "f.py:999" in result.summary
+    assert "Missing type annotation" in result.summary
+
+
 def test_run_resolve_failure_returns_1(monkeypatch, capsys):
     """run_resolve returns 1 when get_review_threads raises RuntimeError."""
 
