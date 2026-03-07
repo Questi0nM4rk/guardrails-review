@@ -255,10 +255,10 @@ def test_execute_tool_post_comments_not_dispatched(ctx):
         execute_tool("post_comments", "{}", ctx)
 
 
-def test_execute_tool_finish_review_not_dispatched(ctx):
-    """finish_review is handled by the agentic loop, not execute_tool."""
-    with pytest.raises(ValueError, match="Unknown tool: finish_review"):
-        execute_tool("finish_review", "{}", ctx)
+def test_execute_tool_submit_review_not_dispatched(ctx):
+    """submit_review is handled by the agentic loop, not execute_tool."""
+    with pytest.raises(ValueError, match="Unknown tool: submit_review"):
+        execute_tool("submit_review", '{"verdict": "approve", "summary": ""}', ctx)
 
 
 # --- Tool definitions ---
@@ -274,7 +274,7 @@ def test_tool_definitions_have_required_structure():
         "search_code",
         "think",
         "post_comments",
-        "finish_review",
+        "submit_review",
     }
     for tool in TOOL_DEFINITIONS:
         assert tool["type"] == "function"
@@ -294,9 +294,11 @@ def test_post_comments_schema_has_comments_array():
     assert params["required"] == ["comments"]
 
 
-def test_finish_review_schema_has_no_parameters():
-    """finish_review tool has no required parameters."""
-    tool = next(t for t in TOOL_DEFINITIONS if t["function"]["name"] == "finish_review")
+def test_submit_review_schema_has_verdict_and_summary():
+    """submit_review tool schema requires verdict and summary parameters."""
+    tool = next(t for t in TOOL_DEFINITIONS if t["function"]["name"] == "submit_review")
     params = tool["function"]["parameters"]
-    assert params.get("properties", {}) == {}
-    assert params.get("required", []) == []
+    assert "verdict" in params["properties"]
+    assert "summary" in params["properties"]
+    assert params["properties"]["verdict"]["enum"] == ["approve", "request_changes"]
+    assert set(params["required"]) == {"verdict", "summary"}

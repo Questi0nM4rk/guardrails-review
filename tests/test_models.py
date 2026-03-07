@@ -38,7 +38,7 @@ def test_get_model_context_length_success(monkeypatch: pytest.MonkeyPatch) -> No
 def test_get_model_context_length_fallback_on_http_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Returns 128_000 fallback on HTTP error."""
+    """Returns 250_000 fallback on HTTP error."""
 
     def fake_urlopen(*_args: Any, **_kwargs: Any) -> None:
         raise urllib.error.HTTPError(
@@ -53,13 +53,13 @@ def test_get_model_context_length_fallback_on_http_error(
 
     result = get_model_context_length("nonexistent/model")
 
-    assert result == 128_000
+    assert result == 250_000
 
 
 def test_get_model_context_length_fallback_on_url_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Returns 128_000 fallback on network error."""
+    """Returns 250_000 fallback on network error."""
 
     def fake_urlopen(*_args: Any, **_kwargs: Any) -> None:
         raise urllib.error.URLError("DNS resolution failed")
@@ -68,32 +68,32 @@ def test_get_model_context_length_fallback_on_url_error(
 
     result = get_model_context_length("test/model")
 
-    assert result == 128_000
+    assert result == 250_000
 
 
 def test_get_model_context_length_fallback_on_bad_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Returns 128_000 fallback on malformed JSON."""
+    """Returns 250_000 fallback on malformed JSON."""
     fake_resp = io.BytesIO(b"not json at all")
     monkeypatch.setattr(urllib.request, "urlopen", _stub_urlopen(fake_resp))
 
     result = get_model_context_length("test/model")
 
-    assert result == 128_000
+    assert result == 250_000
 
 
 def test_get_model_context_length_fallback_on_missing_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Returns 128_000 fallback when response has no context_length."""
+    """Returns 250_000 fallback when response has no context_length."""
     payload = {"data": {"id": "test/model"}}  # no context_length key
     fake_resp = io.BytesIO(json.dumps(payload).encode())
     monkeypatch.setattr(urllib.request, "urlopen", _stub_urlopen(fake_resp))
 
     result = get_model_context_length("test/model")
 
-    assert result == 128_000
+    assert result == 250_000
 
 
 def test_get_model_context_length_correct_url(monkeypatch: pytest.MonkeyPatch) -> None:

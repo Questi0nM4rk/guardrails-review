@@ -9,18 +9,20 @@ from typing import Any
 import pytest
 
 from guardrails_review.github import (
+    add_pending_review_comment,
     approve_pr,
+    create_pending_review,
     get_deleted_files,
     get_pr_diff,
     get_pr_metadata,
     get_repo_info,
     graphql,
-    post_inline_comments,
     post_review,
     request_changes,
     resolve_thread,
     run_gh,
     set_commit_status,
+    submit_pending_review,
 )
 from guardrails_review.types import PRMetadata, ReviewComment, ReviewResult
 
@@ -564,88 +566,107 @@ def test_enable_auto_merge_returns_false_on_failure(monkeypatch: pytest.MonkeyPa
     assert result is False
 
 
-# --- post_inline_comments ---
+# --- Pending review API ---
 
 
-def test_post_inline_comments_sends_comment_review(
+def test_create_pending_review_returns_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """create_pending_review POSTs to /reviews with commit_id and returns review ID."""
+    captured: list[dict[str, Any]] = []
+
+    def mock_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured.append({"args": args, "input": kwargs.get("input", "")})
+        return _make_completed_process(stdout='{"id": 999}')
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    review_id = create_pending_review(pr=42, owner="org", repo="repo", commit_sha="abc123")
+
+    assert review_id == 999
+    payload = json.loads(captured[0]["input"])
+    assert payload == {"commit_id": "abc123"}
+    assert "pulls/42/reviews" in " ".join(captured[0]["args"])
+
+
+def test_add_pending_review_comment_sends_correct_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """post_inline_comments sends a COMMENT review with inline comments."""
-    captured_stdin: list[str] = []
+    """add_pending_review_comment POSTs to /reviews/{id}/comments with correct body."""
+    captured: list[dict[str, Any]] = []
 
-    def mock_run(_args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if kwargs.get("input"):
-            captured_stdin.append(kwargs["input"])
+    def mock_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured.append({"args": args, "input": kwargs.get("input", "")})
         return _make_completed_process(stdout="{}")
 
     monkeypatch.setattr("subprocess.run", mock_run)
 
-    comments = [
-        ReviewComment(path="src/foo.py", line=10, body="Bug here", severity="error"),
-        ReviewComment(
-            path="src/bar.py",
-            line=20,
-            body="Multi-line",
-            severity="error",
-            start_line=15,
-        ),
-    ]
+    comment = ReviewComment(
+        path="src/foo.py", line=10, body="Bug here", severity="error", start_line=8
+    )
+    add_pending_review_comment(review_id=999, pr=42, comment=comment, owner="org", repo="repo")
 
-    success = post_inline_comments(
+    assert len(captured) == 1
+    url_part = " ".join(captured[0]["args"])
+    assert "pulls/42/reviews/999/comments" in url_part
+    payload = json.loads(captured[0]["input"])
+    assert payload["path"] == "src/foo.py"
+    assert payload["line"] == 10
+    assert payload["side"] == "RIGHT"
+    assert payload["start_line"] == 8
+    assert payload["start_side"] == "RIGHT"
+
+
+def test_submit_pending_review_sends_correct_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """submit_pending_review POSTs to /reviews/{id}/events with event and body."""
+    captured: list[dict[str, Any]] = []
+
+    def mock_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured.append({"args": args, "input": kwargs.get("input", "")})
+        return _make_completed_process(stdout="{}")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    submit_pending_review(
+        review_id=999,
         pr=42,
-        comments=comments,
+        verdict="request_changes",
+        body="2 defects found.",
         owner="org",
         repo="repo",
-        commit_sha="abc123",
     )
 
-    assert success is True
-    body = json.loads(captured_stdin[0])
-    assert body["event"] == "COMMENT"
-    assert body["body"] == ""
-    assert body["commit_id"] == "abc123"
-    assert len(body["comments"]) == 2
-    assert body["comments"][0]["path"] == "src/foo.py"
-    assert body["comments"][0]["side"] == "RIGHT"
-    assert body["comments"][1]["start_line"] == 15
+    assert len(captured) == 1
+    url_part = " ".join(captured[0]["args"])
+    assert "pulls/42/reviews/999/events" in url_part
+    payload = json.loads(captured[0]["input"])
+    assert payload["event"] == "REQUEST_CHANGES"
+    assert payload["body"] == "2 defects found."
 
 
-def test_post_inline_comments_empty_list(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """post_inline_comments returns True with no API call when comments is empty."""
-    call_count = {"n": 0}
+def test_submit_pending_review_maps_all_verdicts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """submit_pending_review maps all verdict strings to correct GitHub event values."""
+    payloads: list[dict[str, Any]] = []
 
-    def mock_run(_args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        call_count["n"] += 1
+    def mock_run(_args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        payloads.append(json.loads(kwargs.get("input", "{}")))
         return _make_completed_process(stdout="{}")
 
     monkeypatch.setattr("subprocess.run", mock_run)
 
-    success = post_inline_comments(
-        pr=42, comments=[], owner="org", repo="repo", commit_sha="abc"
-    )
+    for verdict, expected_event in [
+        ("approve", "APPROVE"),
+        ("request_changes", "REQUEST_CHANGES"),
+        ("comment", "COMMENT"),
+        ("unknown", "COMMENT"),  # fallback
+    ]:
+        submit_pending_review(
+            review_id=1, pr=1, verdict=verdict, body="", owner="o", repo="r"
+        )
 
-    assert success is True
-    assert call_count["n"] == 0
-
-
-def test_post_inline_comments_failure_returns_false(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """post_inline_comments returns False on API failure."""
-
-    def mock_run(_args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        return _make_completed_process(returncode=1, stderr="permission denied")
-
-    monkeypatch.setattr("subprocess.run", mock_run)
-
-    comments = [
-        ReviewComment(path="f.py", line=1, body="Bug", severity="error"),
+    assert [p["event"] for p in payloads] == [
+        "APPROVE",
+        "REQUEST_CHANGES",
+        "COMMENT",
+        "COMMENT",
     ]
-
-    success = post_inline_comments(
-        pr=42, comments=comments, owner="org", repo="repo", commit_sha="abc"
-    )
-
-    assert success is False

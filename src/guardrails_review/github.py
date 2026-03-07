@@ -195,65 +195,114 @@ def post_review(
     return True
 
 
-def post_inline_comments(
+def create_pending_review(
     pr: int,
-    comments: list[ReviewComment],
     owner: str,
     repo: str,
     commit_sha: str,
-) -> bool:
-    """Post inline comments as a COMMENT review (no verdict).
+) -> int:
+    """Create a pending (draft) pull request review and return its ID.
 
-    Uses ``event=COMMENT`` with an empty body.  This allows incremental
-    posting during the agentic loop without affecting the final verdict.
+    The review is not visible to the PR author until submitted via
+    ``submit_pending_review()``.  Inline comments are added separately
+    via ``add_pending_review_comment()``.
 
     Args:
         pr: Pull request number.
-        comments: Review comments to post inline.
         owner: Repository owner.
         repo: Repository name.
-        commit_sha: The commit SHA to attach comments to.
+        commit_sha: The commit SHA to attach the review to.
 
     Returns:
-        True on success, False on failure.
+        The GitHub review ID.
     """
-    if not comments:
-        return True
+    payload = {"commit_id": commit_sha}
+    proc = run_gh(
+        "api",
+        f"repos/{owner}/{repo}/pulls/{pr}/reviews",
+        "--method",
+        "POST",
+        "--input",
+        "-",
+        input_data=json.dumps(payload),
+    )
+    data = json.loads(proc.stdout)
+    return int(data["id"])
 
-    api_comments: list[dict[str, object]] = []
-    for c in comments:
-        entry: dict[str, object] = {
-            "path": c.path,
-            "line": c.line,
-            "body": c.body,
-            "side": "RIGHT",
-        }
-        if c.start_line is not None:
-            entry["start_line"] = c.start_line
-            entry["start_side"] = "RIGHT"
-        api_comments.append(entry)
 
-    payload = {
-        "event": "COMMENT",
-        "body": "",
-        "commit_id": commit_sha,
-        "comments": api_comments,
+def add_pending_review_comment(
+    review_id: int,
+    pr: int,
+    comment: ReviewComment,
+    owner: str,
+    repo: str,
+) -> None:
+    """Add an inline comment to a pending pull request review.
+
+    The comment is not visible until the review is submitted.
+
+    Args:
+        review_id: ID of the pending review (from ``create_pending_review()``).
+        pr: Pull request number.
+        comment: The review comment to add.
+        owner: Repository owner.
+        repo: Repository name.
+    """
+    entry: dict[str, object] = {
+        "path": comment.path,
+        "line": comment.line,
+        "body": comment.body,
+        "side": "RIGHT",
     }
+    if comment.start_line is not None:
+        entry["start_line"] = comment.start_line
+        entry["start_side"] = "RIGHT"
 
-    try:
-        run_gh(
-            "api",
-            f"repos/{owner}/{repo}/pulls/{pr}/reviews",
-            "--method",
-            "POST",
-            "--input",
-            "-",
-            input_data=json.dumps(payload),
-        )
-    except RuntimeError:
-        return False
+    run_gh(
+        "api",
+        f"repos/{owner}/{repo}/pulls/{pr}/reviews/{review_id}/comments",
+        "--method",
+        "POST",
+        "--input",
+        "-",
+        input_data=json.dumps(entry),
+    )
 
-    return True
+
+def submit_pending_review(  # noqa: PLR0913
+    review_id: int,
+    pr: int,
+    verdict: str,
+    body: str,
+    owner: str,
+    repo: str,
+) -> None:
+    """Submit a pending pull request review with the given verdict.
+
+    Args:
+        review_id: ID of the pending review (from ``create_pending_review()``).
+        pr: Pull request number.
+        verdict: One of ``"approve"``, ``"request_changes"``, ``"comment"``.
+        body: Summary text shown in the review header.
+        owner: Repository owner.
+        repo: Repository name.
+    """
+    event_map = {
+        "approve": "APPROVE",
+        "request_changes": "REQUEST_CHANGES",
+        "comment": "COMMENT",
+    }
+    event = event_map.get(verdict, "COMMENT")
+    payload = {"event": event, "body": body}
+    run_gh(
+        "api",
+        f"repos/{owner}/{repo}/pulls/{pr}/reviews/{review_id}/events",
+        "--method",
+        "POST",
+        "--input",
+        "-",
+        input_data=json.dumps(payload),
+    )
 
 
 def graphql(

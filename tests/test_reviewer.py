@@ -97,7 +97,7 @@ def test_build_agentic_messages_uses_agentic_prompt():
     assert len(messages) == 2
     assert "tools" in messages[0]["content"].lower()
     assert "post_comments" in messages[0]["content"]
-    assert "finish_review" in messages[0]["content"]
+    assert "submit_review" in messages[0]["content"]
 
 
 def test_parse_response_valid_json():
@@ -596,12 +596,16 @@ def _stub_agentic_deps(monkeypatch, *, existing_threads=None):
     )
     monkeypatch.setattr(f"{_REVIEWER}.get_our_threads", lambda t: t)
 
-    posted_comments: list[object] = []
+    pending_comments: list[object] = []
     monkeypatch.setattr(
-        f"{_REVIEWER}.post_inline_comments",
-        lambda _pr, comments, _o, _r, _sha: posted_comments.extend(comments) or True,
+        f"{_REVIEWER}.create_pending_review",
+        lambda _pr, _o, _r, _sha: 42,
     )
-    return posted_comments
+    monkeypatch.setattr(
+        f"{_REVIEWER}.add_pending_review_comment",
+        lambda _rid, _pr, comment, _o, _r: pending_comments.append(comment),
+    )
+    return pending_comments
 
 
 def test_agentic_loop_calls_tools_then_finishes(monkeypatch):
@@ -649,7 +653,7 @@ def test_agentic_loop_calls_tools_then_finishes(monkeypatch):
             )
         return LLMResponse(
             content=None,
-            tool_calls=[ToolCall(id="c3", name="finish_review", arguments="{}")],
+            tool_calls=[ToolCall(id="c3", name="submit_review", arguments='{"verdict": "approve", "summary": "No defects found."}')],
             finish_reason="tool_calls",
             usage=usage,
         )
@@ -807,7 +811,7 @@ def test_agentic_loop_validates_comments_before_posting(monkeypatch):
             )
         return LLMResponse(
             content=None,
-            tool_calls=[ToolCall(id="c2", name="finish_review", arguments="{}")],
+            tool_calls=[ToolCall(id="c2", name="submit_review", arguments='{"verdict": "approve", "summary": "No defects found."}')],
             finish_reason="tool_calls",
             usage=usage,
         )
@@ -908,8 +912,8 @@ def test_compute_verdict_any_comment_blocks():
     assert _compute_verdict(comments) == "request_changes"
 
 
-def test_agentic_loop_finish_review_approves_when_no_comments(monkeypatch):
-    """finish_review with no comments posted results in approve."""
+def test_agentic_loop_submit_review_approves_when_no_comments(monkeypatch):
+    """submit_review with no comments posted results in approve."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n"
     pr_meta = _meta()
@@ -918,7 +922,7 @@ def test_agentic_loop_finish_review_approves_when_no_comments(monkeypatch):
     def fake_call(messages, model, *, tools, tool_choice=None):
         return LLMResponse(
             content=None,
-            tool_calls=[ToolCall(id="c1", name="finish_review", arguments="{}")],
+            tool_calls=[ToolCall(id="c1", name="submit_review", arguments='{"verdict": "approve", "summary": "No defects found."}')],
             finish_reason="tool_calls",
             usage={"prompt_tokens": 10_000, "completion_tokens": 100},
         )
@@ -955,7 +959,7 @@ def test_run_resolve_failure_returns_1(monkeypatch, capsys):
 
 
 def test_agentic_content_response_nudged(monkeypatch):
-    """Model returning content+stop gets nudged; if it then calls finish_review it completes."""
+    """Model returning content+stop gets nudged; if it then calls submit_review it completes."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=5)
     diff = "diff --git a/f.py b/f.py\n"
     pr_meta = _meta()
@@ -976,7 +980,7 @@ def test_agentic_content_response_nudged(monkeypatch):
             )
         return LLMResponse(
             content=None,
-            tool_calls=[ToolCall(id="c1", name="finish_review", arguments="{}")],
+            tool_calls=[ToolCall(id="c1", name="submit_review", arguments='{"verdict": "approve", "summary": "No defects found."}')],
             finish_reason="tool_calls",
             usage=usage,
         )
@@ -1542,14 +1546,14 @@ def test_run_review_memory_context_injected_into_prompt(tmp_path, monkeypatch):
 
 
 def _make_submit_response(verdict: str = "approve") -> LLMResponse:
-    """Return a finish_review response (replaces old submit_review in v2 loop)."""
+    """Return a submit_review response for use in tests."""
     return LLMResponse(
         content=None,
         tool_calls=[
             ToolCall(
                 id="submit1",
-                name="finish_review",
-                arguments="{}",
+                name="submit_review",
+                arguments='{"verdict": "approve", "summary": "No defects found."}',
             )
         ],
         finish_reason="tool_calls",
@@ -1572,7 +1576,7 @@ def test_agentic_empty_stop_injects_nudge_and_continues(monkeypatch):
         if call_count["n"] == 1:
             # Empty stop — no content, no tool calls
             return LLMResponse(content=None, tool_calls=[], finish_reason="stop", usage=usage)
-        # Second call succeeds with finish_review
+        # Second call succeeds with submit_review
         return _make_submit_response()
 
     monkeypatch.setattr(f"{_REVIEWER}.call_openrouter_tools", fake_call)
@@ -1707,7 +1711,7 @@ def test_agentic_premature_post_comments_nudges_on_large_diff(monkeypatch):
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
 
-    # Should have looped at least twice (first was nudged, second finish_review accepted)
+    # Should have looped at least twice (first was nudged, second submit_review accepted)
     assert call_count["n"] >= 2
     assert result.verdict == "approve"
 
@@ -1748,8 +1752,8 @@ def test_agentic_premature_post_comments_accepted_on_small_diff(monkeypatch):
     assert call_count["n"] == 2
 
 
-def test_agentic_finish_review_always_accepted(monkeypatch):
-    """finish_review is always accepted without nudge regardless of tool use count."""
+def test_agentic_submit_review_always_accepted(monkeypatch):
+    """submit_review is always accepted without nudge regardless of tool use count."""
     config = ReviewConfig(model="test/m", agentic=True, max_iterations=10)
     diff = _make_large_diff(200)
     pr_meta = _meta()
@@ -1765,7 +1769,7 @@ def test_agentic_finish_review_always_accepted(monkeypatch):
 
     result = _run_agentic_review(config, diff, pr_meta, pr=1)
 
-    # finish_review accepted on first call without nudge
+    # submit_review accepted on first call without nudge
     assert call_count["n"] == 1
     assert result.verdict == "approve"
 

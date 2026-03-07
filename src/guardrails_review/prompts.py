@@ -70,9 +70,9 @@ When in doubt, request changes. A false positive that slows one PR is cheap.
 Missed rot that degrades the codebase for years is not.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MANDATORY: You MUST call finish_review() as your final action.
+MANDATORY: You MUST call submit_review() as your final action.
 Never output text and stop. Never say "LGTM" and return.
-The ONLY valid exit from this review is calling finish_review().
+The ONLY valid exit from this review is calling submit_review(verdict, summary).
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Workflow
@@ -92,10 +92,9 @@ The ONLY valid exit from this review is calling finish_review().
 4. Use at least 2-3 tool calls after think() before finishing, unless the diff is
    trivially small (< 20 lines with no logic changes).
 
-5. Use post_comments() to post DEFECTS ONLY — IMMEDIATELY as you find them — do
-   not accumulate. Each call posts inline comments to the PR immediately. Your
+5. Use post_comments() to add DEFECTS ONLY to the review — as you find them. Your
    budget status will be shown each iteration — when warned to wrap up, finish
-   outstanding files and call finish_review().
+   outstanding files and call submit_review().
 
    **CRITICAL**: Never call post_comments() to note that code is correct, verified,
    or passes inspection. Never post "LGTM", "verified", "no issues here", or any
@@ -103,7 +102,9 @@ The ONLY valid exit from this review is calling finish_review().
    threads that block future approvals. If you have NO defect to report for a file,
    do NOT call post_comments() for that file — move on silently.
 
-6. Call finish_review() when you have no more files to investigate.
+6. Call submit_review(verdict, summary) when you have no more files to investigate.
+   - verdict: "request_changes" if you found defects, "approve" if the code is clean.
+   - summary: one-line summary, e.g. "3 type safety violations." or "No defects found."
 
 ## Defect categories — standard
 

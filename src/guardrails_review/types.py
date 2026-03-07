@@ -79,6 +79,8 @@ class ReviewResult:
     model: str = ""
     timestamp: str = ""
     pr: int = 0
+    # >0 = pending GitHub review; submit via submit_pending_review()
+    review_id: int = 0
 
 
 @dataclass(frozen=True)

@@ -31,13 +31,12 @@ def test_system_prompt_contains_defect_categories():
 
 
 def test_agentic_prompt_contains_tool_instructions():
-    """Agentic prompt includes tool usage instructions for new tools."""
+    """Agentic prompt includes tool usage instructions for current tools."""
     assert "post_comments" in _AGENTIC_SYSTEM_PROMPT
-    assert "finish_review" in _AGENTIC_SYSTEM_PROMPT
+    assert "submit_review" in _AGENTIC_SYSTEM_PROMPT
     assert "read_file" in _AGENTIC_SYSTEM_PROMPT
     assert "search_code" in _AGENTIC_SYSTEM_PROMPT
-    # submit_review is gone
-    assert "submit_review" not in _AGENTIC_SYSTEM_PROMPT
+    assert "finish_review" not in _AGENTIC_SYSTEM_PROMPT
 
 
 def test_build_user_content_includes_title_and_diff():
@@ -114,7 +113,7 @@ def test_build_agentic_messages_uses_agentic_prompt():
     assert len(messages) == 2
     assert "tools" in messages[0]["content"].lower()
     assert "post_comments" in messages[0]["content"]
-    assert "finish_review" in messages[0]["content"]
+    assert "submit_review" in messages[0]["content"]
 
 
 def test_build_user_content_includes_memory_context():
@@ -153,10 +152,10 @@ def test_build_agentic_messages_passes_memory_context():
     assert "gh CLI" in messages[1]["content"]
 
 
-def test_agentic_prompt_requires_finish_review():
-    """MUST and finish_review() appear in the agentic system prompt."""
+def test_agentic_prompt_requires_submit_review():
+    """MUST and submit_review() appear in the agentic system prompt."""
     assert "MUST" in _AGENTIC_SYSTEM_PROMPT
-    assert "finish_review()" in _AGENTIC_SYSTEM_PROMPT
+    assert "submit_review()" in _AGENTIC_SYSTEM_PROMPT
 
 
 def test_agentic_prompt_contains_ai_defect_categories():

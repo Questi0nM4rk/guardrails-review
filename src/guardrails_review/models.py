@@ -10,7 +10,7 @@ import urllib.request
 logger = logging.getLogger(__name__)
 
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
-_FALLBACK_CONTEXT_LENGTH = 128_000
+_FALLBACK_CONTEXT_LENGTH = 250_000
 _TIMEOUT_SECONDS = 10
 
 
@@ -18,7 +18,7 @@ def get_model_context_length(model_id: str) -> int:
     """Query OpenRouter ``/api/v1/models/<id>`` for context window size.
 
     No auth needed.  Returns ``context_length`` for the model.
-    Falls back to 128,000 on network error or model not found.
+    Falls back to 250,000 on network error or model not found.
 
     Args:
         model_id: OpenRouter model identifier (e.g. ``"anthropic/claude-sonnet-4"``).

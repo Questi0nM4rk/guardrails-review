@@ -12,15 +12,17 @@ from guardrails_review.config import load_config
 from guardrails_review.diff import format_diff_with_lines, parse_diff_hunks
 from guardrails_review.github import (
     DiffTooLargeError,
+    add_pending_review_comment,
+    create_pending_review,
     enable_auto_merge,
     get_deleted_files,
     get_pr_diff,
     get_pr_metadata,
     get_repo_info,
-    post_inline_comments,
     post_review,
     resolve_thread,
     set_commit_status,
+    submit_pending_review,
 )
 from guardrails_review.llm import call_openrouter, call_openrouter_tools
 from guardrails_review.memory import (
@@ -58,7 +60,6 @@ if TYPE_CHECKING:
         PRMetadata,
         ReviewConfig,
         ReviewThread,
-        ToolCall,
     )
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,7 @@ def _try_dedup(
                 model=final.model,
                 timestamp=final.timestamp,
                 pr=pr,
+                review_id=final.review_id,
             )
     except RuntimeError:
         logger.warning("Failed to deduplicate comments (non-fatal)")
@@ -214,6 +216,7 @@ def _build_final_result(
         model=result.model,
         timestamp=result.timestamp,
         pr=pr,
+        review_id=result.review_id,
     )
     return final, invalid_comments
 
@@ -245,6 +248,7 @@ def _block_approval_if_unresolved(
             model=final.model,
             timestamp=final.timestamp,
             pr=pr,
+            review_id=final.review_id,
         )
         logger.info(
             "Approval → comment: %d unresolved thread(s) from previous rounds",
@@ -253,7 +257,7 @@ def _block_approval_if_unresolved(
     return final
 
 
-def run_review(  # noqa: PLR0915, PLR0912
+def run_review(  # noqa: PLR0915, PLR0912, C901
     pr: int,
     *,
     dry_run: bool = False,
@@ -329,7 +333,12 @@ def run_review(  # noqa: PLR0915, PLR0912
         return 0
 
     try:
-        post_review(pr, final, owner, repo, commit_sha)
+        if final.review_id:
+            submit_pending_review(
+                final.review_id, pr, final.verdict, final.summary, owner, repo
+            )
+        else:
+            post_review(pr, final, owner, repo, commit_sha)
     except RuntimeError as exc:
         logger.exception("Failed to post review")
         print(f"Error posting review: {exc}")
@@ -432,14 +441,15 @@ def _print_iteration(iteration: int, response: LLMResponse) -> None:
             print("  [submit_review] (verdict in output below)", flush=True)
 
 
-def _validate_and_post(
+def _validate_and_post(  # noqa: PLR0913
     raw_arguments: str,
     valid_lines: dict[str, set[int]],
     existing_threads: list[ReviewThread],
     all_posted: list[ReviewComment],
     tool_ctx: ToolContext,
+    review_id: int = 0,
 ) -> tuple[list[ReviewComment], str]:
-    """Validate, deduplicate, and post a batch of inline comments.
+    """Validate, deduplicate, and add a batch of inline comments to the pending review.
 
     Args:
         raw_arguments: JSON string with ``comments`` array from the LLM.
@@ -447,9 +457,10 @@ def _validate_and_post(
         existing_threads: Existing review threads for deduplication.
         all_posted: Comments already posted this session.
         tool_ctx: GitHub context (pr, owner, repo, commit_sha).
+        review_id: Pending review ID (>0 means use add_pending_review_comment).
 
     Returns:
-        Tuple of (newly posted comments, tool result message for LLM).
+        Tuple of (newly queued comments, tool result message for LLM).
     """
     args = json.loads(raw_arguments)
     raw_comments = args.get("comments", [])
@@ -487,13 +498,18 @@ def _validate_and_post(
         and (c.path, c.line) not in existing_set
     ]
 
-    if deduped:
-        post_inline_comments(
-            tool_ctx.pr, deduped, tool_ctx.owner, tool_ctx.repo, tool_ctx.commit_sha
-        )
+    for c in deduped:
+        try:
+            add_pending_review_comment(
+                review_id, tool_ctx.pr, c, tool_ctx.owner, tool_ctx.repo
+            )
+        except RuntimeError:
+            logger.warning(
+                "Failed to add comment %s:%d to pending review", c.path, c.line
+            )
 
     # Build feedback message for the LLM
-    parts = [f"Posted {len(deduped)} comment(s)."]
+    parts = [f"Added {len(deduped)} comment(s) to review."]
     if invalid:
         dropped = [f"{c.path}:{c.line}" for c in invalid]
         parts.append(f"Dropped {len(invalid)} comment(s) on invalid lines: {dropped}")
@@ -512,49 +528,13 @@ class _AgenticState:
     all_posted: list[ReviewComment]
     tool_ctx: ToolContext
     budget: TokenBudget
+    review_id: int = 0
+    pending_verdict: str | None = None
+    pending_summary: str | None = None
     no_progress_streak: int = 0
     budget_warning_sent: bool = False
 
 
-def _dispatch_tool_call(
-    tc: ToolCall,
-    state: _AgenticState,
-    iteration: int,
-) -> bool:
-    """Dispatch a single tool call and append tool result to messages.
-
-    Returns True if ``finish_review`` was requested.
-    """
-    if tc.name == "finish_review":
-        print(f"[agentic] finish_review at iteration {iteration + 1}")
-        state.messages.append(
-            {"role": "tool", "tool_call_id": tc.id, "content": "Review complete."}
-        )
-        return True
-
-    if tc.name == "post_comments":
-        new, feedback = _validate_and_post(
-            tc.arguments,
-            state.valid_lines,
-            state.existing_threads,
-            state.all_posted,
-            state.tool_ctx,
-        )
-        state.all_posted.extend(new)
-        n_total = len(state.all_posted)
-        print(f"[agentic] posted {len(new)} comment(s) (total: {n_total})")
-        state.messages.append(
-            {"role": "tool", "tool_call_id": tc.id, "content": feedback}
-        )
-        return False
-
-    # think, read_file, search_code, list_changed_files
-    print(f"[agentic] tool: {tc.name}({tc.arguments[:80]}...)")
-    tool_result = execute_tool(tc.name, tc.arguments, state.tool_ctx)
-    state.messages.append(
-        {"role": "tool", "tool_call_id": tc.id, "content": tool_result}
-    )
-    return False
 
 
 def _inject_budget_messages(state: _AgenticState) -> None:
@@ -573,7 +553,7 @@ def _inject_budget_messages(state: _AgenticState) -> None:
                 "content": (
                     "You are at 85% of your token budget. Wrap up your "
                     "investigation. Post any remaining findings and call "
-                    "finish_review()."
+                    "submit_review()."
                 ),
             }
         )
@@ -631,6 +611,9 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
         ci_context=ci_context,
     )
 
+    review_id = create_pending_review(pr, owner, repo, commit_sha)
+    print(f"[agentic] created pending review {review_id}")
+
     state = _AgenticState(
         messages=messages,
         valid_lines=valid_lines or parse_diff_hunks(diff),
@@ -638,6 +621,7 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
         all_posted=[],
         tool_ctx=tool_ctx,
         budget=budget,
+        review_id=review_id,
     )
 
     timeout_retries = 0
@@ -688,6 +672,7 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
                     comments=[],
                     model=config.model,
                     pr=pr,
+                    review_id=state.review_id,
                 )
             logger.warning("Agentic API call failed, falling back to oneshot review")
             return _run_oneshot_review(
@@ -701,7 +686,7 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
             if response.content:
                 if response.finish_reason == "stop":
                     logger.info(
-                        "Iter %d: content+stop without finish_review, nudging",
+                        "Iter %d: content+stop without submit_review, nudging",
                         iteration,
                     )
                     state.messages.append(
@@ -733,13 +718,19 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
 
         done = False
         for tc in response.tool_calls:
-            if tc.name == "finish_review":
-                print(f"[agentic] finish_review at iteration {iteration + 1}")
+            if tc.name == "submit_review":
+                args = json.loads(tc.arguments)
+                state.pending_verdict = args.get("verdict", "approve")
+                state.pending_summary = args.get("summary", "")
+                print(
+                    f"[agentic] submit_review verdict={state.pending_verdict}"
+                    f" at iteration {iteration + 1}"
+                )
                 state.messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": "Review complete.",
+                        "content": "Review submission queued.",
                     }
                 )
                 done = True
@@ -781,10 +772,15 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
                     state.existing_threads,
                     state.all_posted,
                     state.tool_ctx,
+                    review_id=state.review_id,
                 )
                 state.all_posted.extend(new)
                 n_total = len(state.all_posted)
-                print(f"[agentic] posted {len(new)} comment(s) (total: {n_total})")
+                n_added = len(new)
+                print(
+                    f"[agentic] added {n_added} comment(s) to review"
+                    f" (total: {n_total})"
+                )
                 state.messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": feedback}
                 )
@@ -803,14 +799,23 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
         if done:
             break
 
-    verdict = "request_changes" if state.all_posted else "approve"
-    summary = _build_agentic_summary(state.all_posted, state.budget)
+    # Use verdict/summary from submit_review if provided, else auto-compute.
+    # Always request_changes if comments were posted — regardless of bot's verdict.
+    verdict = (
+        "request_changes"
+        if (state.all_posted or state.pending_verdict == "request_changes")
+        else (state.pending_verdict or "approve")
+    )
+    summary = state.pending_summary or _build_agentic_summary(
+        state.all_posted, state.budget
+    )
     return ReviewResult(
         verdict=verdict,
         summary=summary,
         comments=[],
         model=config.model,
         pr=pr,
+        review_id=state.review_id,
     )
 
 

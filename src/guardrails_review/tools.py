@@ -155,14 +155,33 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
         "type": "function",
         "function": {
-            "name": "finish_review",
+            "name": "submit_review",
             "description": (
-                "Signal that your review is complete. Call this when you "
-                "have no more files to investigate."
+                "Submit your review. This is your final action — call it when "
+                "you have finished investigating all files. "
+                "Set verdict to 'request_changes' if you found any defects, "
+                "'approve' if the code is clean."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["approve", "request_changes"],
+                        "description": (
+                            "'request_changes' if defects were found, "
+                            "'approve' if the code is clean."
+                        ),
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": (
+                            "Short summary shown in the review header. "
+                            "E.g. '3 defects found.' or 'No defects found.'"
+                        ),
+                    },
+                },
+                "required": ["verdict", "summary"],
             },
         },
     },
