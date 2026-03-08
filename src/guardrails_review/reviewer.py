@@ -16,7 +16,6 @@ from guardrails_review.github import (
     create_pending_review,
     enable_auto_merge,
     get_deleted_files,
-    get_pending_review_comment_count,
     get_pr_diff,
     get_pr_metadata,
     get_repo_info,
@@ -804,24 +803,11 @@ def _run_agentic_review(  # noqa: PLR0913, PLR0912, PLR0915, C901
             break
 
     # Use verdict/summary from submit_review if provided, else auto-compute.
-    # Override to request_changes if comments were posted — UNLESS GitHub dropped
-    # them all (e.g. line outside diff context), in which case trust the bot's verdict.
-    if state.pending_verdict == "request_changes":
-        verdict = "request_changes"
-    elif state.all_posted and state.review_id:
-        actual = get_pending_review_comment_count(state.review_id, pr, owner, repo)
-        if actual > 0:
-            verdict = "request_changes"
-        else:
-            logger.warning(
-                "[agentic] %d comment(s) posted but 0 survived in review %d "
-                "— GitHub dropped them; using bot verdict=%s",
-                len(state.all_posted),
-                state.review_id,
-                state.pending_verdict or "approve",
-            )
-            verdict = state.pending_verdict or "approve"
-    elif state.all_posted:
+    # If any comments were posted to the pending review, always request_changes —
+    # the model may have called submit_review(approve) despite posting defects.
+    # Note: get_pending_review_comment_count cannot be used here because GitHub's
+    # API returns 0 comments for draft/pending reviews before they are submitted.
+    if state.all_posted or state.pending_verdict == "request_changes":
         verdict = "request_changes"
     else:
         verdict = state.pending_verdict or "approve"

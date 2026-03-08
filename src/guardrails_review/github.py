@@ -263,37 +263,6 @@ def add_pending_review_comment(
     )
 
 
-def get_pending_review_comment_count(
-    review_id: int,
-    pr: int,
-    owner: str,
-    repo: str,
-) -> int:
-    """Return the number of inline comments on a pending review.
-
-    Used to verify that comments survived GitHub API validation before
-    deciding whether to submit as CHANGES_REQUESTED or APPROVE.
-
-    Args:
-        review_id: ID of the pending review.
-        pr: Pull request number.
-        owner: Repository owner.
-        repo: Repository name.
-
-    Returns:
-        Number of inline comments currently on the review, or 0 on error.
-    """
-    try:
-        proc = run_gh(
-            "api",
-            f"repos/{owner}/{repo}/pulls/{pr}/reviews/{review_id}/comments",
-        )
-        data: list = json.loads(proc.stdout)
-        return len(data)
-    except (RuntimeError, json.JSONDecodeError, TypeError):
-        return 0
-
-
 def submit_pending_review(  # noqa: PLR0913
     review_id: int,
     pr: int,
